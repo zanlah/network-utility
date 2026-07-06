@@ -3,3 +3,8 @@
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Go build output
+utilities/systray-ports/systray-ports
+utilities/systray-netscan/systray-netscan
+*.exe

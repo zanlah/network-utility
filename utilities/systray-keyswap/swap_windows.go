@@ -111,21 +111,23 @@ var (
 	hookCallback = syscall.NewCallback(hookProc)
 )
 
-// Diagnostics. Set KEYSWAP_DEBUG=1 to log every key-down (its virtual-key code,
-// whether we swap it, and whether the injected key actually went in). Logging
-// runs on a background goroutine drained from a buffered channel so the hook
-// proc never blocks on file I/O — a slow WH_KEYBOARD_LL proc gets silently
-// evicted by Windows (the LowLevelHooksTimeout), which would break the swap.
+// Diagnostics. When on, log every key-down (its virtual-key code, whether we
+// swap it, and whether the injected key actually went in). Toggle it from the
+// tray menu ("Debug logging") or start with KEYSWAP_DEBUG=1. Logging runs on a
+// background goroutine drained from a buffered channel so the hook proc never
+// blocks on file I/O — a slow WH_KEYBOARD_LL proc gets silently evicted by
+// Windows (the LowLevelHooksTimeout), which would break the swap.
 var (
-	keyDebug = os.Getenv("KEYSWAP_DEBUG") != ""
+	keyDebug atomic.Bool
 	dbgCh    = make(chan string, 512)
 )
 
-func startDebugLogger() {
-	if !keyDebug {
-		return
+// init starts the drain goroutine and honours KEYSWAP_DEBUG so logging works
+// regardless of whether the swap/hook has been enabled yet.
+func init() {
+	if os.Getenv("KEYSWAP_DEBUG") != "" {
+		keyDebug.Store(true)
 	}
-	logf("KEYSWAP_DEBUG on — logging keystrokes. Known VKs: LWin=0x5B RWin=0x5C LCtrl=0xA2 RCtrl=0xA3")
 	go func() {
 		for s := range dbgCh {
 			logf("%s", s)
@@ -133,8 +135,16 @@ func startDebugLogger() {
 	}()
 }
 
+// setDebug flips per-keystroke logging at runtime (menu-driven, no restart).
+func setDebug(on bool) {
+	keyDebug.Store(on)
+	logf("debug logging = %v (VKs of interest: LWin=0x5B RWin=0x5C LCtrl=0xA2 RCtrl=0xA3)", on)
+}
+
+func debugEnabled() bool { return keyDebug.Load() }
+
 func dbg(format string, a ...any) {
-	if !keyDebug {
+	if !keyDebug.Load() {
 		return
 	}
 	select {
@@ -173,7 +183,6 @@ func hookLoop(ready chan error) {
 	runtime.LockOSThread()
 	defer guard("hookLoop")
 
-	startDebugLogger()
 	hMod, _, _ := procGetModuleHandle.Call(0)
 	h, _, callErr := procSetWindowsHookEx.Call(uintptr(whKeyboardLL), hookCallback, hMod, 0)
 	if h == 0 {
@@ -203,7 +212,7 @@ func hookLoop(ready chan error) {
 // retain it, so the Windows-owned memory is never touched after we return.
 func hookProc(nCode uintptr, wParam uintptr, k *kbdllhookstruct) uintptr {
 	if int32(nCode) == hcAction {
-		if keyDebug && (wParam == wmKeyDown || wParam == wmSysKeyDown) {
+		if debugEnabled() && (wParam == wmKeyDown || wParam == wmSysKeyDown) {
 			_, matched := swapTarget(k.vkCode)
 			dbg("keydown vk=%#x swapOn=%v isModifier=%v ownInjected=%v",
 				k.vkCode, swapOn.Load(), matched, k.dwExtraInfo == injectSig)

@@ -22,6 +22,10 @@ func setSwap(on bool) error {
 	return nil
 }
 
+// Debug logging is a Windows-hook concern; no-ops elsewhere.
+func setDebug(bool)      {}
+func debugEnabled() bool { return false }
+
 // clipboard + URL opener (used by the bug reporter) for macOS/Linux.
 func copyToClipboard(s string) {
 	var c *exec.Cmd

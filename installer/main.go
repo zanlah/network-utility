@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // app is one installable tool. name is both the utilities/ subdir and the binary.
@@ -165,6 +166,14 @@ func printSummary(apps []app, dir string, autostart, startNow bool) {
 
 // install builds the selected binaries and registers autostart per options.
 func install(root string, opts options) error {
+	// Stop any running instances first. On Windows a running .exe can't be
+	// overwritten by `go build` (the rebuild would fail and leave the old binary
+	// in place), and stopping also prevents duplicate tray instances after the
+	// start-now launch below.
+	for _, a := range opts.apps {
+		stop(filepath.Join(opts.dir, exeName(a.name)))
+	}
+
 	built, err := buildAll(root, opts.dir, opts.apps)
 	if err != nil {
 		return err
@@ -240,6 +249,7 @@ func buildAll(root, dstDir string, apps []app) ([]string, error) {
 	var out []string
 	for _, a := range apps {
 		dst := filepath.Join(dstDir, exeName(a.name))
+		ensureReplaceable(dst) // wait for a just-stopped Windows instance to release the .exe
 		fmt.Printf("building %s…\n", a.name)
 		args := []string{"build", "-o", dst}
 		if runtime.GOOS == "windows" {
@@ -264,6 +274,24 @@ func buildAll(root, dstDir string, apps []app) ([]string, error) {
 		out = append(out, dst)
 	}
 	return out, nil
+}
+
+// ensureReplaceable waits (Windows only) for a stopped instance to release its
+// .exe so `go build` can overwrite it. taskkill /F terminates the process but the
+// file handle can linger briefly; we retry removing it for up to ~2s.
+func ensureReplaceable(path string) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	for i := 0; i < 20; i++ {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return
+		}
+		if err := os.Remove(path); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // parseAppSelection maps a comma list ("ports,netscan", "all", full names) to apps.

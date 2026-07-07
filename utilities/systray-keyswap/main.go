@@ -65,6 +65,24 @@ func onReady() {
 
 	systray.AddSeparator()
 
+	// Troubleshooting: log each keystroke's virtual-key code to keyswap.log so we
+	// can see what the ⌘ key actually sends (useful inside VMs).
+	mDebug := systray.AddMenuItemCheckbox("Debug logging", "Log keystrokes to keyswap.log for troubleshooting", debugEnabled())
+	if !swapSupported() {
+		mDebug.Disable()
+	}
+	go func() {
+		for range mDebug.ClickedCh {
+			on := !mDebug.Checked()
+			setDebug(on)
+			if on {
+				mDebug.Check()
+			} else {
+				mDebug.Uncheck()
+			}
+		}
+	}()
+
 	mOpenCfg := systray.AddMenuItem("Open config folder", "Reveal the config/log folder")
 	go func() {
 		for range mOpenCfg.ClickedCh {

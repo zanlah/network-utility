@@ -51,6 +51,7 @@ func onReady() {
 	initLogging()
 	loadConfig()
 	logf("started")
+	applyIcon()                            // Windows tray icon (no-op on macOS)
 	systray.SetTitle("🔌 …")               // shown next to the clock on macOS
 	systray.SetTooltip("Listening TCP ports") // Windows tray shows the tooltip, not text
 

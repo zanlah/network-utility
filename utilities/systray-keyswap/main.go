@@ -29,6 +29,7 @@ func onReady() {
 	loadConfig()
 	logf("started (os supports swap = %v)", swapSupported())
 
+	applyIcon() // Windows tray icon (no-op on macOS); without it the tray is invisible
 	systray.SetTitle("⌨︎")
 	updateStatus(false)
 

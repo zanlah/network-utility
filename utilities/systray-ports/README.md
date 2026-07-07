@@ -96,9 +96,9 @@ Go 1.24).
   at runtime. That's the `maxRows` pool in `main.go`.
 - **You give up SwiftBar's niceties** — SF Symbols, `color=`, per-line fonts,
   auto-refresh intervals, the plugin folder. You'd rebuild what you need.
-- **Windows tray ≠ macOS menu bar.** Windows shows an *icon* (no text label), so
-  the `🔌 N` count only shows on macOS; on Windows you'd `SetIcon()` and put the
-  count in the tooltip (or render a number into the icon). `SetTitle` is macOS-only.
+- **Windows tray ≠ macOS menu bar.** Windows shows an *icon* (no text label), so the
+  tool embeds `icon.ico` and calls `SetIcon()` (see `icon_windows.go`); the `🔌 N`
+  count only renders next to the macOS clock via `SetTitle`.
 - **You own the lifecycle.** SwiftBar launches/refreshes plugins for you. Here you
   ship a persistent process and arrange autostart yourself (a LaunchAgent on macOS,
   a Startup shortcut or Task Scheduler entry on Windows).

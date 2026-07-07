@@ -91,6 +91,7 @@ func onReady() {
 	}
 	st.display = DisplayHosts(st.active, st.sortMode) // show known devices from last run
 
+	applyIcon() // Windows tray icon (no-op on macOS)
 	systray.SetTitle("📡")
 	systray.SetTooltip("Subnet scanner")
 

@@ -97,8 +97,8 @@ go test -v -run TestLive -timeout 180s
   tax as `systray-ports`.
 - **No colors / SF Symbols** per row — industrial devices are marked with a `⚙` text
   badge instead of the SwiftBar amber `cpu` icon.
-- **Windows tray shows an icon, not text**, so the `📡 N` count is macOS-only there;
-  you'd `SetIcon()` + tooltip on Windows.
+- **Windows tray shows an icon, not text**, so the tool embeds `icon.ico` and calls
+  `SetIcon()` (see `icon_windows.go`); the `📡 N` count/title is macOS-only.
 - "Ping in Terminal" was dropped (terminal-spawning is fiddly per-OS); Copy IP / Open
   http / SSH are kept.
 - No last-scan cache persisted to disk yet (state is in-memory; a restart starts empty).

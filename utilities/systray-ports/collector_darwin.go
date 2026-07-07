@@ -8,9 +8,10 @@ import (
 	"strings"
 )
 
-// listListeners (macOS): parse `lsof -nP -iTCP -sTCP:LISTEN`, same as ports.10s.sh.
+// listListeners (macOS): parse `lsof -nP +c 0 -iTCP -sTCP:LISTEN`. +c 0 keeps full
+// command names (so "com.docker.backend" isn't truncated to "com.docke").
 func listListeners() ([]Listener, error) {
-	out, _ := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN").Output()
+	out, _ := exec.Command("lsof", "-nP", "+c", "0", "-iTCP", "-sTCP:LISTEN").Output()
 	// lsof exits non-zero when it finds nothing; that's not an error for us.
 
 	seen := map[string]bool{}
@@ -38,7 +39,9 @@ func listListeners() ([]Listener, error) {
 			continue
 		}
 		seen[key] = true
-		res = append(res, Listener{Port: port, PID: pid, Process: f[0], Addr: name})
+		// lsof escapes spaces in the command as \x20 — turn them back into spaces.
+		proc := strings.ReplaceAll(f[0], `\x20`, " ")
+		res = append(res, Listener{Port: port, PID: pid, Process: proc, Addr: name})
 	}
 	return res, nil
 }

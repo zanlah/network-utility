@@ -33,9 +33,11 @@ const maxRows = 30
 
 type row struct {
 	item *systray.MenuItem
+	open *systray.MenuItem
 	term *systray.MenuItem
 	kill *systray.MenuItem
 	pid  int // the process this row currently maps to (guarded by mu)
+	port int // its port, for the "open in browser" action
 }
 
 var (
@@ -47,6 +49,7 @@ func main() { systray.Run(onReady, func() {}) }
 
 func onReady() {
 	initLogging()
+	loadConfig()
 	logf("started")
 	systray.SetTitle("🔌 …")               // shown next to the clock on macOS
 	systray.SetTooltip("Listening TCP ports") // Windows tray shows the tooltip, not text
@@ -64,13 +67,20 @@ func onReady() {
 		it.Hide()
 		r := &row{
 			item: it,
+			open: it.AddSubMenuItem("Open in browser", "Open http://localhost:<port>"),
 			term: it.AddSubMenuItem("Terminate (SIGTERM)", ""),
 			kill: it.AddSubMenuItem("Force Kill (SIGKILL)", ""),
 		}
 		rows = append(rows, r)
-		go func(r *row) { // one click-handler goroutine per row; reads the live PID
+		go func(r *row) { // one click-handler goroutine per row; reads the live PID/port
 			for {
 				select {
+				case <-r.open.ClickedCh:
+					if port := r.currentPort(); port > 0 {
+						url := fmt.Sprintf("http://localhost:%d", port)
+						logf("open %s", url)
+						openURL(url)
+					}
 				case <-r.term.ClickedCh:
 					if pid := r.currentPID(); pid > 0 {
 						logf("SIGTERM pid %d -> %v", pid, terminate(pid))
@@ -87,6 +97,30 @@ func onReady() {
 	}
 
 	systray.AddSeparator()
+
+	// Settings submenu — groups the app's preferences in the UI.
+	mSettings := systray.AddMenuItem("Settings", "Preferences")
+	mDevOnly := mSettings.AddSubMenuItemCheckbox("Dev ports only", "Hide non-dev processes (Spotify, Control Center, …)", devOnlyEnabled())
+	go func() {
+		for range mDevOnly.ClickedCh {
+			if mDevOnly.Checked() {
+				mDevOnly.Uncheck()
+				setDevOnly(false)
+			} else {
+				mDevOnly.Check()
+				setDevOnly(true)
+			}
+			logf("dev-ports-only = %v", devOnlyEnabled())
+			refresh()
+		}
+	}()
+	mOpenCfg := mSettings.AddSubMenuItem("Open config folder", "Reveal the config/log folder")
+	go func() {
+		for range mOpenCfg.ClickedCh {
+			openURL(confDir())
+		}
+	}()
+
 	mReport := systray.AddMenuItem("Report bug…", "Copy diagnostics and email "+bugEmail)
 	go func() {
 		for range mReport.ClickedCh {
@@ -111,6 +145,12 @@ func (r *row) currentPID() int {
 	return r.pid
 }
 
+func (r *row) currentPort() int {
+	mu.Lock()
+	defer mu.Unlock()
+	return r.port
+}
+
 // refresh re-collects listeners and repaints the row pool.
 func refresh() {
 	listeners, err := listListeners()
@@ -120,6 +160,16 @@ func refresh() {
 		return
 	}
 	sort.Slice(listeners, func(i, j int) bool { return listeners[i].Port < listeners[j].Port })
+
+	if devOnlyEnabled() { // filter out non-dev processes (Spotify, Control Center, …)
+		var f []Listener
+		for _, l := range listeners {
+			if isDev(l) {
+				f = append(f, l)
+			}
+		}
+		listeners = f
+	}
 	systray.SetTitle(fmt.Sprintf("🔌 %d", len(listeners)))
 
 	mu.Lock()
@@ -128,15 +178,18 @@ func refresh() {
 		if i < len(listeners) {
 			l := listeners[i]
 			tag := ""
-			if isWebDev(l.Port) {
+			if isWebDev(l.Port) || isDocker(l.Process) { // dev port OR any Docker-published port
 				tag = "  ◆"
 			}
-			r.item.SetTitle(fmt.Sprintf("%-14s :%-5d  pid %d%s", l.Process, l.Port, l.PID, tag))
+			r.item.SetTitle(fmt.Sprintf("%-18s :%-5d  pid %d%s", l.Process, l.Port, l.PID, tag))
+			r.open.SetTitle(fmt.Sprintf("Open http://localhost:%d", l.Port))
 			r.pid = l.PID
+			r.port = l.Port
 			r.item.Show()
 		} else {
 			r.item.Hide()
 			r.pid = 0
+			r.port = 0
 		}
 	}
 }

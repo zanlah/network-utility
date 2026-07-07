@@ -48,8 +48,30 @@ The bash version needed a lot of scaffolding that Go makes disappear:
   **advertised routes** — all one-click scannable (that's how you scan a remote
   subnet through a subnet router).
 - **Tailscale** submenu: peers with online/offline + `⇄ route` / `⇱ exit` badges.
+- **Loxone** submenu: **Scan for Loxone (broadcast)** uses Loxone's UDP discovery
+  (a `0x00` byte to :7070, replies on :7071) to find Miniservers **by identity,
+  regardless of their IP** — so it catches a Miniserver sitting on a different subnet
+  than the one you'd scan (installer static IPs, factory defaults), as long as it
+  shares an L2 broadcast domain. Each hit shows name · IP:port · firmware, with
+  **Open web UI**, **Copy IP**, and **Scan its subnet** (jump straight to sweeping the
+  network you just discovered it on). Reaches every attached interface's broadcast
+  address, not just the default route's.
 - **Sort by IP / host**, **Add subnet…** (native dialog), background scan with a
   `📡 ⏳` title + `⏳ Scanning…` banner, persisted state.
+- **Device tracking / history** (per subnet, in `inventory.json`):
+  - Each device is remembered with **first-seen / last-seen**, keyed by a stable
+    identity (**Loxone serial** → MAC → IP) so it survives even over Tailscale where
+    there's no ARP MAC.
+  - **Union + aging** instead of replace: a device missed by one (flaky, routed)
+    scan doesn't vanish — it shows `offline Xm ago` and only drops from view after
+    the aging window (30 min). So packet loss no longer looks like a device
+    disappearing.
+  - **What changed** is surfaced: a `Changes: +N new · M back · −K offline` line
+    after each scan, a `· NEW` tag on newly-seen devices, and a `•` on the menu-bar
+    icon while there are new devices.
+  - **Bounded confirm-retry:** if a scan finds < 70% of the devices it knew were
+    online, it re-scans **once** and merges the results — catching a bad routed
+    sweep without looping or hiding a genuine outage.
 - **Report bug…** — copies a diagnostics report (OS, version, detected networks,
   active state, and the last 300 log lines) to the clipboard and opens a pre-filled
   email to `zan.lah@viptronik.si`. Events, scan timings, Tailscale errors and any

@@ -22,15 +22,33 @@ var (
 	logBuf []string
 )
 
-func confFile(name string) string {
+// confDir stores config next to the executable ("inside the app" / portable mode),
+// falling back to the user config dir if the app's folder isn't writable (e.g. the
+// binary lives in a read-only location like /Applications).
+func confDir() string {
+	if exe, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = resolved
+		}
+		d := filepath.Join(filepath.Dir(exe), "config")
+		if os.MkdirAll(d, 0o755) == nil {
+			probe := filepath.Join(d, ".w")
+			if os.WriteFile(probe, nil, 0o644) == nil { // confirm it's actually writable
+				_ = os.Remove(probe)
+				return d
+			}
+		}
+	}
 	base, err := os.UserConfigDir()
 	if err != nil {
 		base, _ = os.UserHomeDir()
 	}
 	d := filepath.Join(base, "systray-ports")
 	_ = os.MkdirAll(d, 0o755)
-	return filepath.Join(d, name)
+	return d
 }
+
+func confFile(name string) string { return filepath.Join(confDir(), name) }
 
 // logWriter routes the standard library logger into our ring buffer too.
 type logWriter struct{}

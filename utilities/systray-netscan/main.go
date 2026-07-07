@@ -26,19 +26,22 @@ import (
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 const (
-	maxHosts = 150
-	maxNets  = 30
-	maxPeers = 60
+	maxHosts  = 150
+	maxNets   = 30
+	maxPeers  = 60
+	maxLoxone = 16
 )
 
 // ---- in-memory app state (replaces the bash cache + marker files) ----
 type state struct {
 	mu       sync.Mutex
-	hosts    []Host
+	display  []DispHost
+	changes  Changes
 	scanning bool
 	scanSub  string
 	active   string
 	sortMode string
+	loxone   []LoxoneDevice
 }
 
 var st = state{sortMode: "ip"}
@@ -52,17 +55,24 @@ type netRow struct {
 	item *systray.MenuItem
 	cidr string
 }
+type loxRow struct {
+	item, openIt, copyIt, scanIt *systray.MenuItem
+	dev                          LoxoneDevice
+}
 
 var (
 	mTitleStatus *systray.MenuItem
+	mChanges     *systray.MenuItem
 	mScanNow     *systray.MenuItem
 	mSortIP      *systray.MenuItem
 	mSortHost    *systray.MenuItem
 	mAdd         *systray.MenuItem
 	mTS          *systray.MenuItem
+	mLoxStatus   *systray.MenuItem
 	hostRows     []*hostRow
 	netRows      []*netRow
 	peerItems    []*systray.MenuItem
+	loxRows      []*loxRow
 	rowMu        sync.Mutex
 )
 
@@ -70,6 +80,7 @@ func main() { systray.Run(onReady, func() {}) }
 
 func onReady() {
 	initLogging()
+	LoadInventory()
 	logf("started")
 	st.active = LoadActive()
 	st.sortMode = LoadSort()
@@ -78,6 +89,7 @@ func onReady() {
 			st.active = d[0].CIDR
 		}
 	}
+	st.display = DisplayHosts(st.active, st.sortMode) // show known devices from last run
 
 	systray.SetTitle("📡")
 	systray.SetTooltip("Subnet scanner")
@@ -85,6 +97,8 @@ func onReady() {
 	mScanNow = systray.AddMenuItem("Scan active subnet", "")
 	mTitleStatus = systray.AddMenuItem("", "")
 	mTitleStatus.Hide()
+	mChanges = systray.AddMenuItem("", "New / offline devices since last scan")
+	mChanges.Hide()
 	mSortIP = systray.AddMenuItem("Sort by IP", "")
 	mSortHost = systray.AddMenuItem("Sort by host", "")
 	systray.AddSeparator()
@@ -154,6 +168,47 @@ func onReady() {
 		peerItems = append(peerItems, it)
 	}
 
+	// Loxone submenu: UDP-broadcast discovery finds Miniservers by identity, even on a
+	// different subnet than you'd scan (installer static IPs, factory defaults).
+	mLoxone := systray.AddMenuItem("Loxone", "Find Miniservers by UDP broadcast")
+	mLoxScan := mLoxone.AddSubMenuItem("Scan for Loxone (broadcast)", "")
+	go func() {
+		for range mLoxScan.ClickedCh {
+			startLoxoneScan()
+		}
+	}()
+	mLoxStatus = mLoxone.AddSubMenuItem("", "")
+	mLoxStatus.Hide()
+	for i := 0; i < maxLoxone; i++ {
+		it := mLoxone.AddSubMenuItem("", "")
+		it.Hide()
+		lr := &loxRow{
+			item:   it,
+			openIt: it.AddSubMenuItem("Open web UI", ""),
+			copyIt: it.AddSubMenuItem("Copy IP", ""),
+			scanIt: it.AddSubMenuItem("Scan its subnet", ""),
+		}
+		loxRows = append(loxRows, lr)
+		go func(lr *loxRow) {
+			for {
+				select {
+				case <-lr.openIt.ClickedCh:
+					if d := loxDev(lr); d.IP != "" {
+						openURL(fmt.Sprintf("http://%s:%d", d.IP, d.Port))
+					}
+				case <-lr.copyIt.ClickedCh:
+					if d := loxDev(lr); d.IP != "" {
+						copyToClipboard(d.IP)
+					}
+				case <-lr.scanIt.ClickedCh:
+					if d := loxDev(lr); d.IP != "" {
+						startScan(d.Subnet())
+					}
+				}
+			}
+		}(lr)
+	}
+
 	systray.AddSeparator()
 	mReport := systray.AddMenuItem("Report bug…", "Copy diagnostics and email "+bugEmail)
 	go func() {
@@ -186,15 +241,36 @@ func onReady() {
 	repaint()
 }
 
-func rowIP(r *hostRow) string  { rowMu.Lock(); defer rowMu.Unlock(); return r.ip }
-func rowCIDR(n *netRow) string { rowMu.Lock(); defer rowMu.Unlock(); return n.cidr }
+func rowIP(r *hostRow) string      { rowMu.Lock(); defer rowMu.Unlock(); return r.ip }
+func rowCIDR(n *netRow) string     { rowMu.Lock(); defer rowMu.Unlock(); return n.cidr }
+func loxDev(l *loxRow) LoxoneDevice { rowMu.Lock(); defer rowMu.Unlock(); return l.dev }
+
+// startLoxoneScan runs Loxone UDP discovery in the background, then repaints.
+func startLoxoneScan() {
+	logf("loxone discovery start")
+	mLoxStatus.SetTitle("⏳ searching…")
+	mLoxStatus.Show()
+	go func() {
+		defer guard("loxone")
+		devs := DiscoverLoxone(3 * time.Second)
+		st.mu.Lock()
+		st.loxone = devs
+		st.mu.Unlock()
+		logf("loxone discovery: %d found", len(devs))
+		repaint()
+	}()
+}
 
 func setSort(mode string) {
 	st.mu.Lock()
 	st.sortMode = mode
-	SortHosts(st.hosts, mode)
+	active := st.active
 	st.mu.Unlock()
 	SaveSort(mode)
+	disp := DisplayHosts(active, mode)
+	st.mu.Lock()
+	st.display = disp
+	st.mu.Unlock()
 	repaint()
 }
 
@@ -232,13 +308,23 @@ func startScan(cidr string) {
 	go func() {
 		defer guard("scan " + cidr)
 		t0 := time.Now()
+		prevOnline := OnlineCount(cidr)
 		hosts := ScanSubnet(cidr, true)
-		SortHosts(hosts, mode)
+		// Bounded confirm-retry: if this scan found far fewer than we knew were
+		// online, it's probably a flaky routed sweep — scan once more and merge.
+		if prevOnline >= 5 && len(hosts) < prevOnline*7/10 {
+			logf("scan %s found %d vs %d known online — retrying once", cidr, len(hosts), prevOnline)
+			hosts = unionByKey(hosts, ScanSubnet(cidr, true))
+		}
+		ch := MergeScan(cidr, hosts)
+		disp := DisplayHosts(cidr, mode)
 		st.mu.Lock()
-		st.hosts = hosts
+		st.display = disp
+		st.changes = ch
 		st.scanning = false
 		st.mu.Unlock()
-		logf("scan done %s: %d hosts in %s", cidr, len(hosts), time.Since(t0).Round(time.Millisecond))
+		logf("scan done %s: %d live (+%d new, %d back, -%d offline) in %s",
+			cidr, len(hosts), ch.New, ch.Returned, ch.Offline, time.Since(t0).Round(time.Millisecond))
 		repaint()
 	}()
 }
@@ -289,13 +375,24 @@ func networkEntries(peers []TSPeer) []netEntry {
 // repaint pushes current state into the menu widgets. Safe to call from any goroutine.
 func repaint() {
 	st.mu.Lock()
-	hosts := make([]Host, len(st.hosts))
-	copy(hosts, st.hosts)
+	hosts := make([]DispHost, len(st.display))
+	copy(hosts, st.display)
+	changes := st.changes
 	scanning := st.scanning
 	scanSub := st.scanSub
 	active := st.active
 	mode := st.sortMode
 	st.mu.Unlock()
+
+	online, newCount := 0, 0
+	for _, d := range hosts {
+		if d.Online {
+			online++
+		}
+		if d.New && d.Online {
+			newCount++
+		}
+	}
 
 	// title + status line
 	if scanning {
@@ -304,13 +401,26 @@ func repaint() {
 		mTitleStatus.Show()
 		mScanNow.Disable()
 	} else {
-		systray.SetTitle(fmt.Sprintf("📡 %d", len(hosts)))
+		t := fmt.Sprintf("📡 %d", online)
+		if newCount > 0 {
+			t += " •" // dot = there are new devices
+		}
+		systray.SetTitle(t)
 		mTitleStatus.Hide()
 		mScanNow.Enable()
 	}
 	if active != "" {
 		mScanNow.SetTitle("Scan active subnet (" + active + ")")
 	}
+
+	// changes summary
+	if !scanning && changes.Any() {
+		mChanges.SetTitle(fmt.Sprintf("Changes: +%d new · %d back · −%d offline", changes.New, changes.Returned, changes.Offline))
+		mChanges.Show()
+	} else {
+		mChanges.Hide()
+	}
+
 	setCheck(mSortIP, "Sort by IP", mode == "ip")
 	setCheck(mSortHost, "Sort by host", mode == "host")
 
@@ -318,9 +428,8 @@ func repaint() {
 	rowMu.Lock()
 	for i, r := range hostRows {
 		if i < len(hosts) {
-			h := hosts[i]
-			r.ip = h.IP
-			r.item.SetTitle(hostTitle(h))
+			r.ip = hosts[i].IP
+			r.item.SetTitle(hostTitle(hosts[i]))
 			r.item.Show()
 		} else {
 			r.ip = ""
@@ -360,6 +469,28 @@ func repaint() {
 			it.Hide()
 		}
 	}
+
+	// discovered Loxone Miniservers
+	st.mu.Lock()
+	loxs := append([]LoxoneDevice(nil), st.loxone...)
+	st.mu.Unlock()
+	rowMu.Lock()
+	for i, lr := range loxRows {
+		if i < len(loxs) {
+			d := loxs[i]
+			lr.dev = d
+			lr.item.SetTitle(fmt.Sprintf("%s · %s:%d · v%s", d.Name, d.IP, d.Port, d.Version))
+			lr.item.Show()
+		} else {
+			lr.dev = LoxoneDevice{}
+			lr.item.Hide()
+		}
+	}
+	rowMu.Unlock()
+	if len(loxs) > 0 {
+		mLoxStatus.SetTitle(fmt.Sprintf("%d found", len(loxs)))
+		mLoxStatus.Show()
+	}
 }
 
 func setCheck(it *systray.MenuItem, label string, on bool) {
@@ -370,7 +501,7 @@ func setCheck(it *systray.MenuItem, label string, on bool) {
 	}
 }
 
-func hostTitle(h Host) string {
+func hostTitle(h DispHost) string {
 	name := h.Name
 	if name == "" {
 		name = "—"
@@ -382,7 +513,25 @@ func hostTitle(h Host) string {
 	case h.Vendor != "":
 		badge = "  · " + h.Vendor
 	}
+	if h.New && h.Online {
+		badge += "  · NEW"
+	}
+	if !h.Online {
+		badge += "  · offline " + since(h.LastSeen)
+	}
 	return fmt.Sprintf("%-15s  %-24s%s", h.IP, name, badge)
+}
+
+func since(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	}
 }
 
 func peerTitle(p TSPeer) string {

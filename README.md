@@ -31,25 +31,36 @@ utilities/
 
 Each tool has its own README with full details, build flags, and design notes.
 
-## Quick start
+## Install
 
-Needs **Go 1.21+**.
+Needs **Go 1.21+**. From the repo root:
 
 ```sh
-# Ports monitor
-cd utilities/systray-ports
-go build -o systray-ports . && ./systray-ports          # macOS
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o systray-ports.exe .   # Windows
-
-# Subnet scanner
-cd utilities/systray-netscan
-go build -o systray-netscan . && ./systray-netscan
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o systray-netscan.exe .
+make install      # macOS: build both → ~/Applications/network-utility, start now + at login
+make uninstall    # macOS: stop and remove them
 ```
 
-Each app runs as a persistent tray process — launch it from a terminal, or wire up
-autostart (a LaunchAgent on macOS, a Startup shortcut / Task Scheduler entry on
-Windows).
+`make install` builds each tool, drops the binaries in `~/Applications/network-utility`,
+and installs a **LaunchAgent** per tool (`~/Library/LaunchAgents/si.viptronik.*.plist`,
+generated from [`packaging/launchagent.plist.in`](packaging/launchagent.plist.in)) so
+they launch at login and restart if they crash. `🔌` and `📡` appear in the menu bar.
+On its first scan the subnet scanner asks for **Local Network** permission — allow it.
+
+Building locally means no Gatekeeper hassle (a self-built binary isn't quarantined).
+
+### Other targets
+
+```sh
+make build        # just build both for this OS into ./bin
+make windows      # cross-build both as .exe into ./bin (copy to Windows, add to shell:startup)
+make run-ports    # run one in the foreground (quick test)
+make run-netscan
+make clean
+```
+
+**Windows:** `make windows`, copy the `.exe`s somewhere permanent, and put shortcuts
+in the Startup folder (`Win+R` → `shell:startup`). The tray is icon-only there, so
+counts show in the tooltip.
 
 ## Architecture
 

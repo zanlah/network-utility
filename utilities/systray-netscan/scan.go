@@ -73,26 +73,31 @@ func probePort(ip string, port int, timeout time.Duration) bool {
 	return true
 }
 
-var loxVer = regexp.MustCompile(`[0-9]+(\.[0-9]+){2,}`)
+var (
+	loxVer = regexp.MustCompile(`[0-9]+(\.[0-9]+){2,}`)
+	loxSnr = regexp.MustCompile(`[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}`) // serial == MAC
+)
 
-// loxone: query the Miniserver's unauthenticated API; returns firmware + true if Loxone.
-func loxone(ip string) (string, bool) {
+// loxone: query the Miniserver's unauthenticated API; returns firmware + serial +
+// true if Loxone. The serial is a stable identity even over Tailscale (no ARP MAC).
+func loxone(ip string) (version, serial string, ok bool) {
 	client := http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get("http://" + ip + "/dev/cfg/api")
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	s := string(body)
 	if !strings.Contains(s, `control="dev/cfg/api"`) {
-		return "", false
+		return "", "", false
 	}
-	return loxVer.FindString(s), true
+	return loxVer.FindString(s), strings.ToUpper(loxSnr.FindString(s)), true
 }
 
-// fingerprint: probe the industrial ports and classify.
-func fingerprint(ip, vendor string) (kind string, open []int) {
+// fingerprint: probe the industrial ports and classify. Also returns a Loxone
+// serial when found (used as a stable device identity).
+func fingerprint(ip, vendor string) (kind string, open []int, serial string) {
 	for _, p := range plcPorts {
 		if probePort(ip, p, time.Second) {
 			open = append(open, p)
@@ -118,11 +123,12 @@ func fingerprint(ip, vendor string) (kind string, open []int) {
 		kind = "EtherNet/IP (likely Rockwell)"
 	}
 	if kind == "" && has(80) {
-		if ver, ok := loxone(ip); ok {
+		if ver, snr, ok := loxone(ip); ok {
 			kind = "Loxone Miniserver"
 			if ver != "" {
 				kind += " " + ver
 			}
+			serial = snr
 		}
 	}
 	if vendor == "Loxone" {
@@ -140,7 +146,12 @@ func enrich(ip string, probe bool) Host {
 	}
 	h.Name = hostName(ip)
 	if probe {
-		h.Kind, h.Ports = fingerprint(ip, h.Vendor)
+		var serial string
+		h.Kind, h.Ports, serial = fingerprint(ip, h.Vendor)
+		// Give routed Loxones a stable identity (they have no ARP MAC).
+		if h.MAC == "" && serial != "" {
+			h.MAC = serial
+		}
 		// Last-resort name: many web-enabled devices (PLCs, gateways, printers,
 		// Loxone) have no DNS/mDNS record but do serve a page <title> or Server
 		// header — often the model, e.g. "IF2E011 Configuration".

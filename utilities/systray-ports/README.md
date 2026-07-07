@@ -1,9 +1,45 @@
-# systray-ports — cross-platform POC
+# systray-ports — cross-platform tray tool
 
-A proof-of-concept rewrite of the **ports** plugin as a single Go program that runs
-on **macOS and Windows** using [`getlantern/systray`](https://github.com/getlantern/systray),
-instead of a bash SwiftBar plugin. It's here to show what the "one codebase, real
-cross-platform" option actually looks like — not (yet) a finished tool.
+Lists listening TCP ports in the menu bar / tray, on **macOS and Windows** from one
+Go codebase ([`getlantern/systray`](https://github.com/getlantern/systray)).
+
+## Menu
+
+- Each row: process · `:port` · PID. A `◆` marks **dev ports** (a broad set of
+  frontend/backend dev servers + the usual Dockerized services — DBs, queues,
+  caches, search, dashboards) **and every port published by Docker**, on whatever
+  number (flagged by process, via `isDocker()`, not just a fixed list).
+- Per-row actions: **Open in browser** (`http://localhost:<port>`), **Terminate
+  (SIGTERM)**, **Force Kill (SIGKILL)**.
+- **Settings** submenu:
+  - **Dev ports only** (checkbox, remembered): hides everything that isn't a dev port
+    or a Docker-published port — so Spotify, Control Center, Raycast, etc. drop out and
+    you're left with just `node`, `docker`, your databases, and friends.
+  - **Open config folder** — reveals where settings + logs are stored.
+- **Report bug…** and **Refresh now**.
+
+## Config
+
+Settings and logs are stored **next to the executable**, in a `config/` folder
+beside the binary (portable — copy the app folder and your settings come along):
+
+```
+systray-ports          the binary
+config/
+  config.json          settings (JSON)
+  log.txt              diagnostics log
+```
+
+`config.json` looks like:
+
+```json
+{
+  "devOnly": false
+}
+```
+
+If the app lives somewhere read-only (e.g. `/Applications`), it falls back to the
+user config dir automatically.
 
 ## The architecture (the point of this example)
 

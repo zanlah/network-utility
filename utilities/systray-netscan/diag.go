@@ -72,8 +72,8 @@ func diagnostics() string {
 	fmt.Fprintf(&b, "time:    %s\n", time.Now().Format(time.RFC3339))
 	fmt.Fprintf(&b, "os/arch: %s/%s   go: %s\n", runtime.GOOS, runtime.GOARCH, runtime.Version())
 	st.mu.Lock()
-	fmt.Fprintf(&b, "active:  %s   sort: %s   scanning: %v   hosts: %d\n",
-		st.active, st.sortMode, st.scanning, len(st.hosts))
+	fmt.Fprintf(&b, "active:  %s   sort: %s   scanning: %v   shown: %d\n",
+		st.active, st.sortMode, st.scanning, len(st.display))
 	st.mu.Unlock()
 	fmt.Fprintf(&b, "tailscale bin: %q\n", tailscaleBin())
 	fmt.Fprintf(&b, "networks:\n")

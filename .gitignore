@@ -5,6 +5,10 @@
 .claude/settings.local.json
 
 # Go build output
+/bin/
 utilities/systray-ports/systray-ports
 utilities/systray-netscan/systray-netscan
 *.exe
+
+# Portable config written next to the binary during dev builds
+utilities/*/config/

@@ -28,6 +28,7 @@ func onReady() {
 	initLogging()
 	loadConfig()
 	logf("started (os supports swap = %v)", swapSupported())
+	armHook() // install the keyboard hook now so it's always live (diagnostics + swap)
 
 	applyIcon() // Windows tray icon (no-op on macOS); without it the tray is invisible
 	systray.SetTitle("⌨︎")

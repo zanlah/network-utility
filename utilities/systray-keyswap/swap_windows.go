@@ -167,6 +167,43 @@ func setSwap(on bool) error {
 	return nil
 }
 
+// armHook installs the keyboard hook at startup so it is always live — for the
+// swap (when enabled) and for the always-on modifier diagnostics below. This
+// makes "keyboard hook installed" appear in every run's log; if it doesn't, the
+// hook install itself failed, which is the finding we need. Idempotent.
+func armHook() { _ = ensureHook() }
+
+// modifier diagnostics: even with full debug logging off, log the first handful
+// of modifier key-downs (Shift/Ctrl/Alt/Win/CapsLock/Menu — never character
+// keys, so no typed text is recorded). This reveals what a key like ⌘ actually
+// reports without the user having to enable anything. Capped per run.
+var modSampleCount atomic.Int32
+
+func isModifierVK(vk uint32) bool {
+	switch {
+	case vk == 0x10 || vk == 0x11 || vk == 0x12: // generic Shift/Ctrl/Alt
+		return true
+	case vk >= 0xA0 && vk <= 0xA5: // L/R Shift/Ctrl/Alt
+		return true
+	case vk == 0x5B || vk == 0x5C || vk == 0x5D: // LWin/RWin/Apps(Menu)
+		return true
+	case vk == 0x14: // CapsLock
+		return true
+	}
+	return false
+}
+
+func sampleModifier(vk uint32, isSwapKey bool) {
+	if modSampleCount.Load() >= 200 {
+		return
+	}
+	modSampleCount.Add(1)
+	select {
+	case dbgCh <- fmt.Sprintf("modifier keydown vk=%#x isSwapKey=%v swapOn=%v (hook live)", vk, isSwapKey, swapOn.Load()):
+	default:
+	}
+}
+
 // ensureHook installs the keyboard hook exactly once and reports whether it's up.
 func ensureHook() error {
 	hookOnce.Do(func() {
@@ -212,10 +249,14 @@ func hookLoop(ready chan error) {
 // retain it, so the Windows-owned memory is never touched after we return.
 func hookProc(nCode uintptr, wParam uintptr, k *kbdllhookstruct) uintptr {
 	if int32(nCode) == hcAction {
-		if debugEnabled() && (wParam == wmKeyDown || wParam == wmSysKeyDown) {
+		if wParam == wmKeyDown || wParam == wmSysKeyDown {
 			_, matched := swapTarget(k.vkCode)
-			dbg("keydown vk=%#x swapOn=%v isModifier=%v ownInjected=%v",
-				k.vkCode, swapOn.Load(), matched, k.dwExtraInfo == injectSig)
+			if debugEnabled() {
+				dbg("keydown vk=%#x swapOn=%v isModifier=%v ownInjected=%v",
+					k.vkCode, swapOn.Load(), matched, k.dwExtraInfo == injectSig)
+			} else if k.dwExtraInfo != injectSig && isModifierVK(k.vkCode) {
+				sampleModifier(k.vkCode, matched) // always-on, capped, modifiers only
+			}
 		}
 		if swapOn.Load() && k.dwExtraInfo != injectSig { // ignore our own injected events
 			if target, ok := swapTarget(k.vkCode); ok {

@@ -91,16 +91,18 @@ login:
 ```sh
 go run ./installer install --apps ports          # just the ports monitor
 go run ./installer install --apps netscan --dir "D:\tools\netutil"
+go run ./installer install --apps ports,rustdesk # ports monitor + RustDesk
 go run ./installer install -y                    # accept every default, no prompts
 go run ./installer install --no-autostart --no-start   # build + place only
 ```
 
 | Flag | Meaning |
 |---|---|
-| `--apps ports,netscan` | which tools (also `all`; default: all) |
+| `--apps ports,netscan,keyswap,rustdesk` | which tools (also `all`; default: all except the opt-out ones) |
 | `--dir <path>` | install location (default: the per-OS folder above) |
 | `--no-autostart` | don't register login autostart |
 | `--no-start` | don't launch right after installing |
+| `--rustdesk` | also fetch + launch the RustDesk client (same as ticking it) |
 | `-y`, `--yes` | accept all defaults, never prompt |
 
 Any flag you omit is asked interactively (or takes its default when input isn't a terminal).

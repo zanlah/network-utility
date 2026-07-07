@@ -60,6 +60,8 @@ Which tools do you want to install?
 
 ❯ ◉ 🔌 Ports monitor    — listening TCP ports + one-click kill
   ◉ 📡 Subnet scanner   — live hosts, PLC/Loxone detection, Tailscale peers
+  ◯ ⌨️ Key swap         — swap Ctrl ⇄ ⊞ Win for VMs (Windows only)
+  ◯ 🖥️ RustDesk         — remote-desktop client (self-hosted)
 
 Install location [~/Applications/network-utility]:
 Start automatically at login? [Y/n]:
@@ -67,7 +69,9 @@ Start now? [Y/n]:
 ```
 
 Use **↑/↓** to move, **space** to check/uncheck, **a** to toggle all, **enter** to
-confirm. Press **Enter** to accept each of the remaining defaults. Then it builds only
+confirm. **Key swap** and **RustDesk** start unchecked — tick them if you want them.
+RustDesk (macOS/Windows/Linux) is fetched from its official releases and, when you have
+the deployment password, preconfigured for the self-hosted server. Press **Enter** to accept each of the remaining defaults. Then it builds only
 the tools you picked, installs them, and wires up autostart so they come back at every
 login:
 

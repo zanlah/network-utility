@@ -30,23 +30,32 @@ import (
 	"time"
 )
 
-// app is one installable tool. name is both the utilities/ subdir and the binary.
+// app is one installable tool. For our own tray tools, name is both the
+// utilities/ subdir and the binary. external tools (RustDesk) aren't built from
+// source — they're fetched and installed by a dedicated handler instead.
 type app struct {
-	name  string // e.g. "systray-ports"
-	icon  string
-	title string
-	desc  string
+	name     string // e.g. "systray-ports", or "rustdesk"
+	icon     string
+	title    string
+	desc     string
+	external bool // not a go-built tray binary — installed by a custom handler
 }
 
+// rustDeskAppName is the pseudo-app entry for the RustDesk remote-desktop client
+// in the picker. Kept as a const so the special-casing reads clearly.
+const rustDeskAppName = "rustdesk"
+
 var allApps = []app{
-	{"systray-ports", "🔌", "Ports monitor", "listening TCP ports + one-click kill"},
-	{"systray-netscan", "📡", "Subnet scanner", "live hosts, PLC/Loxone detection, Tailscale peers"},
-	{"systray-keyswap", "⌨️", "Key swap", "swap Ctrl ⇄ ⊞ Win for VMs (Windows only)"},
+	{name: "systray-ports", icon: "🔌", title: "Ports monitor", desc: "listening TCP ports + one-click kill"},
+	{name: "systray-netscan", icon: "📡", title: "Subnet scanner", desc: "live hosts, PLC/Loxone detection, Tailscale peers"},
+	{name: "systray-keyswap", icon: "⌨️", title: "Key swap", desc: "swap Ctrl ⇄ ⊞ Win for VMs (Windows only)"},
+	{name: rustDeskAppName, icon: "🖥️", title: "RustDesk", desc: "remote-desktop client (self-hosted)", external: true},
 }
 
 // optOutByDefault holds tools that are NOT installed unless the user picks them
-// explicitly. keyswap installs a global keyboard hook, so it stays opt-in.
-var optOutByDefault = map[string]bool{"systray-keyswap": true}
+// explicitly. keyswap installs a global keyboard hook and RustDesk is a separate
+// remote-desktop download, so both stay opt-in.
+var optOutByDefault = map[string]bool{"systray-keyswap": true, rustDeskAppName: true}
 
 // defaultApps is the selection used when the user doesn't choose explicitly
 // (non-interactive install, or pressing Enter at the picker): everything except
@@ -173,11 +182,13 @@ func resolveOptions(args []string, withAutostart bool) options {
 		}
 	}
 
-	// Optional extra: the RustDesk remote-desktop client (install only).
-	rustDesk := *rustdesk
-	if withAutostart && interactive && !*rustdesk {
-		rustDesk = promptYesNo("Also download the RustDesk remote-desktop client?", false)
+	// The RustDesk remote-desktop client is now a checkbox entry, so it's
+	// "wanted" when the user ticked it. The --rustdesk flag force-adds it (handy
+	// for a non-interactive install that also wants the client).
+	if withAutostart && *rustdesk && !contains(apps, rustDeskAppName) {
+		apps = append(apps, appByName(rustDeskAppName))
 	}
+	rustDesk := withAutostart && contains(apps, rustDeskAppName)
 
 	// Self-host preconfiguration for that client. Explicit --rustdesk-host/-key
 	// win; otherwise unlock the sealed blob with the deployment password (flag or
@@ -207,11 +218,12 @@ func printSummary(apps []app, dir string, autostart, startNow, rustDesk bool, rd
 	fmt.Printf("    location:  %s\n", dir)
 	fmt.Printf("    autostart: %s\n", yesNo(autostart))
 	fmt.Printf("    start now: %s\n", yesNo(startNow))
-	rd6 := yesNo(rustDesk)
+	// RustDesk itself already shows up in the tools line above; add a server line
+	// only when it's ticked and preconfigured for a self-hosted server.
 	if rustDesk && rd.enabled() {
-		rd6 += " → " + rd.host
+		fmt.Printf("    rustdesk:  self-hosted → %s\n", rd.host)
 	}
-	fmt.Printf("    rustdesk:  %s\n\n", rd6)
+	fmt.Printf("\n")
 }
 
 // install builds the selected binaries and registers autostart per options.
@@ -219,8 +231,11 @@ func install(root string, opts options) error {
 	// Stop any running instances first. On Windows a running .exe can't be
 	// overwritten by `go build` (the rebuild would fail and leave the old binary
 	// in place), and stopping also prevents duplicate tray instances after the
-	// start-now launch below.
+	// start-now launch below. External tools (RustDesk) aren't ours to stop.
 	for _, a := range opts.apps {
+		if a.external {
+			continue
+		}
 		stop(filepath.Join(opts.dir, exeName(a.name)))
 	}
 
@@ -274,6 +289,9 @@ func tryLaunch(bin string) {
 // uninstall removes autostart entries and installed binaries for both tools.
 func uninstall(dir string) error {
 	for _, a := range allApps {
+		if a.external {
+			continue // RustDesk installs itself; we don't manage its files
+		}
 		bin := filepath.Join(dir, exeName(a.name))
 		if err := unregisterAutostart(bin); err != nil {
 			// Usually "not found" — fine, just note it.
@@ -305,6 +323,9 @@ func buildAll(root, dstDir string, apps []app) ([]string, error) {
 	}
 	var out []string
 	for _, a := range apps {
+		if a.external {
+			continue // fetched + installed by a dedicated handler, not `go build`
+		}
 		dst := filepath.Join(dstDir, exeName(a.name))
 		ensureReplaceable(dst) // wait for a just-stopped Windows instance to release the .exe
 		fmt.Printf("building %s…\n", a.name)
@@ -388,6 +409,16 @@ func contains(apps []app, name string) bool {
 		}
 	}
 	return false
+}
+
+// appByName returns the catalog entry with the given name (empty app if none).
+func appByName(name string) app {
+	for _, a := range allApps {
+		if a.name == name {
+			return a
+		}
+	}
+	return app{name: name}
 }
 
 // defaultInstallDir is where the binaries live, per OS (all user-writable, no admin).

@@ -268,42 +268,52 @@ func latestRustDeskRelease() (*ghRelease, error) {
 
 // pickRustDeskAsset chooses the installer asset matching this OS and CPU arch,
 // preferring an exact arch match and falling back to any asset of the right kind.
+//
+// Linux gets a list of acceptable formats in preference order: the AppImage
+// first, because it runs on any distro with no root and no package manager (which
+// suits this installer's no-admin philosophy), then .deb / .rpm for people who'd
+// rather install a native package.
 func pickRustDeskAsset(assets []ghAsset) (ghAsset, error) {
 	arch := map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[runtime.GOARCH]
 
-	var suffix string
+	var suffixes []string
 	switch runtime.GOOS {
 	case "windows":
-		suffix = ".exe"
+		suffixes = []string{".exe"}
 		if arch == "" {
 			arch = "x86_64" // RustDesk ships Windows as x86_64
 		}
 	case "darwin":
-		suffix = ".dmg"
+		suffixes = []string{".dmg"}
 	default: // linux and friends
-		suffix = ".deb"
+		suffixes = []string{".appimage", ".deb", ".rpm"}
 	}
 
-	var fallback ghAsset
-	for _, a := range assets {
-		n := strings.ToLower(a.Name)
-		if !strings.HasSuffix(n, suffix) {
-			continue
+	// Try each format in order; within a format, prefer an exact arch match but
+	// accept any arch as a fallback before moving to the next (less-preferred)
+	// format.
+	for _, suffix := range suffixes {
+		var fallback ghAsset
+		for _, a := range assets {
+			n := strings.ToLower(a.Name)
+			if !strings.HasSuffix(n, suffix) {
+				continue
+			}
+			if strings.Contains(n, "sciter") {
+				continue // legacy Sciter UI build — prefer the default (Flutter) one
+			}
+			if arch != "" && strings.Contains(n, arch) {
+				return a, nil // exact OS + arch match
+			}
+			if fallback.URL == "" {
+				fallback = a
+			}
 		}
-		if strings.Contains(n, "sciter") {
-			continue // legacy Sciter UI build — prefer the default (Flutter) one
-		}
-		if arch != "" && strings.Contains(n, arch) {
-			return a, nil // exact OS + arch match
-		}
-		if fallback.URL == "" {
-			fallback = a
+		if fallback.URL != "" {
+			return fallback, nil
 		}
 	}
-	if fallback.URL != "" {
-		return fallback, nil
-	}
-	return ghAsset{}, fmt.Errorf("no RustDesk %s installer found for %s/%s", suffix, runtime.GOOS, runtime.GOARCH)
+	return ghAsset{}, fmt.Errorf("no RustDesk installer (%s) found for %s/%s", strings.Join(suffixes, "/"), runtime.GOOS, runtime.GOARCH)
 }
 
 // downloadFile streams url to dst (following GitHub's redirect to its CDN).
@@ -345,8 +355,17 @@ func openInstaller(path string) error {
 		return exec.Command(path).Start() // run the installer .exe
 	case "darwin":
 		return exec.Command("open", path).Start() // mount the .dmg
-	default:
-		return exec.Command("xdg-open", path).Start() // hand the .deb to the OS
+	default: // linux and friends
+		// An AppImage is the app itself, not a package: make it executable and
+		// launch it straight away (no root, no package manager). Native packages
+		// (.deb/.rpm) get handed to the desktop's GUI installer instead.
+		if strings.HasSuffix(strings.ToLower(path), ".appimage") {
+			if err := os.Chmod(path, 0o755); err != nil {
+				return err
+			}
+			return exec.Command(path).Start()
+		}
+		return exec.Command("xdg-open", path).Start() // hand the .deb/.rpm to the OS
 	}
 }
 

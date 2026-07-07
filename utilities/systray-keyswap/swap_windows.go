@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -110,6 +111,38 @@ var (
 	hookCallback = syscall.NewCallback(hookProc)
 )
 
+// Diagnostics. Set KEYSWAP_DEBUG=1 to log every key-down (its virtual-key code,
+// whether we swap it, and whether the injected key actually went in). Logging
+// runs on a background goroutine drained from a buffered channel so the hook
+// proc never blocks on file I/O — a slow WH_KEYBOARD_LL proc gets silently
+// evicted by Windows (the LowLevelHooksTimeout), which would break the swap.
+var (
+	keyDebug = os.Getenv("KEYSWAP_DEBUG") != ""
+	dbgCh    = make(chan string, 512)
+)
+
+func startDebugLogger() {
+	if !keyDebug {
+		return
+	}
+	logf("KEYSWAP_DEBUG on — logging keystrokes. Known VKs: LWin=0x5B RWin=0x5C LCtrl=0xA2 RCtrl=0xA3")
+	go func() {
+		for s := range dbgCh {
+			logf("%s", s)
+		}
+	}()
+}
+
+func dbg(format string, a ...any) {
+	if !keyDebug {
+		return
+	}
+	select {
+	case dbgCh <- fmt.Sprintf(format, a...):
+	default: // buffer full: drop rather than block the hook proc
+	}
+}
+
 // swapSupported reports that key swapping is available on this OS.
 func swapSupported() bool { return true }
 
@@ -140,6 +173,7 @@ func hookLoop(ready chan error) {
 	runtime.LockOSThread()
 	defer guard("hookLoop")
 
+	startDebugLogger()
 	hMod, _, _ := procGetModuleHandle.Call(0)
 	h, _, callErr := procSetWindowsHookEx.Call(uintptr(whKeyboardLL), hookCallback, hMod, 0)
 	if h == 0 {
@@ -168,8 +202,13 @@ func hookLoop(ready chan error) {
 // unsafe uintptr→pointer conversion. We only read it during the call and never
 // retain it, so the Windows-owned memory is never touched after we return.
 func hookProc(nCode uintptr, wParam uintptr, k *kbdllhookstruct) uintptr {
-	if int32(nCode) == hcAction && swapOn.Load() {
-		if k.dwExtraInfo != injectSig { // ignore our own injected events
+	if int32(nCode) == hcAction {
+		if keyDebug && (wParam == wmKeyDown || wParam == wmSysKeyDown) {
+			_, matched := swapTarget(k.vkCode)
+			dbg("keydown vk=%#x swapOn=%v isModifier=%v ownInjected=%v",
+				k.vkCode, swapOn.Load(), matched, k.dwExtraInfo == injectSig)
+		}
+		if swapOn.Load() && k.dwExtraInfo != injectSig { // ignore our own injected events
 			if target, ok := swapTarget(k.vkCode); ok {
 				up := wParam == wmKeyUp || wParam == wmSysKeyUp
 				sendKey(target, up)
@@ -208,7 +247,14 @@ func sendKey(vk uint16, keyUp bool) {
 	}
 	in := input{inputType: inputKeyboard}
 	in.ki = kbdInput{wVk: vk, dwFlags: flags, dwExtraInfo: injectSig}
-	procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
+	n, _, callErr := procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
+	if n == 0 {
+		// 0 events inserted → injection was blocked. The usual cause is UIPI:
+		// a non-elevated process can't inject into an elevated foreground window.
+		dbg("SendInput BLOCKED vk=%#x up=%v err=%v (is the focused app running as admin?)", vk, keyUp, callErr)
+	} else {
+		dbg("SendInput ok vk=%#x up=%v", vk, keyUp)
+	}
 }
 
 // command builds an *exec.Cmd that runs its child without popping a console

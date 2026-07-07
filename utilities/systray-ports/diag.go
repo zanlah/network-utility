@@ -17,6 +17,10 @@ const bugEmail = "zan.lah@viptronik.si"
 
 const maxLogLines = 300
 
+// logFile is this tool's own log, kept separate from the other tools that share
+// the same install dir (they'd otherwise all append to a single log.txt).
+const logFile = "ports.log"
+
 var (
 	logMu  sync.Mutex
 	logBuf []string
@@ -72,7 +76,7 @@ func logf(format string, args ...any) {
 		logBuf = logBuf[len(logBuf)-maxLogLines:]
 	}
 	logMu.Unlock()
-	if f, err := os.OpenFile(confFile("log.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+	if f, err := os.OpenFile(confFile(logFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 		fmt.Fprintln(f, line)
 		_ = f.Close()
 	}

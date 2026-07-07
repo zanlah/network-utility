@@ -40,86 +40,99 @@ git clone https://github.com/zanlah/network-utility.git
 cd network-utility
 ```
 
----
+### One command, any OS
 
-### 🍎 macOS
-
-**1. Install (one command, from the repo root):**
+From the repo root:
 
 ```sh
-make install
+go run ./installer install
 ```
 
-This builds both tools, puts the binaries in `~/Applications/network-utility/`, and
-registers a **LaunchAgent** for each (`~/Library/LaunchAgents/si.viptronik.*.plist`)
-so they start now, again at every login, and restart if they crash. `🔌` and `📡`
-appear in the menu bar within a second or two.
+Same command on **macOS, Windows, and Linux**. It runs an interactive setup (like
+`npx shadcn add`) — a checkbox picker for the tools, then a couple of quick questions:
 
-**2. Grant permission:** the first time the subnet scanner runs a scan, macOS asks
-to let it **find devices on your local network** — click **Allow** (or later:
-System Settings → Privacy & Security → Local Network). Without it, scans find nothing.
+```
+Which tools do you want to install?
+↑/↓ move · space toggle · a all · enter confirm
 
-**3. Done.** They're running and will come back after every reboot.
+❯ ◉ 🔌 Ports monitor    — listening TCP ports + one-click kill
+  ◉ 📡 Subnet scanner   — live hosts, PLC/Loxone detection, Tailscale peers
 
-**Uninstall:**
+Install location [~/Applications/network-utility]:
+Start automatically at login? [Y/n]:
+Start now? [Y/n]:
+```
+
+Use **↑/↓** to move, **space** to check/uncheck, **a** to toggle all, **enter** to
+confirm. Press **Enter** to accept each of the remaining defaults. Then it builds only
+the tools you picked, installs them, and wires up autostart so they come back at every
+login:
+
+| OS | Default location | Autostart mechanism |
+|---|---|---|
+| macOS | `~/Applications/network-utility/` | **LaunchAgent** (`~/Library/LaunchAgents/si.viptronik.*.plist`) — also restarts on crash |
+| Windows | `%LOCALAPPDATA%\network-utility\` | per-user **Run** registry key (`HKCU\…\CurrentVersion\Run`) — no admin, no Startup-folder shuffling |
+| Linux | `~/.local/share/network-utility/` | XDG autostart entry (`~/.config/autostart/*.desktop`) |
+
+`🔌` and `📡` appear in the menu bar / system tray within a second or two.
+
+> **Windows:** just open **PowerShell** in the repo folder and run the one command above
+> — no `.exe` juggling, no `shell:startup` shortcuts. (Go must be installed.)
+
+**Skip the prompts** with flags (handy for scripting or a second machine):
 
 ```sh
-make uninstall            # stops them + removes the LaunchAgents and binaries
-rm -rf ~/Applications/network-utility   # optional: also delete settings/logs
+go run ./installer install --apps ports          # just the ports monitor
+go run ./installer install --apps netscan --dir "D:\tools\netutil"
+go run ./installer install -y                    # accept every default, no prompts
+go run ./installer install --no-autostart --no-start   # build + place only
 ```
 
-> No Gatekeeper "unidentified developer" warning — because you built it yourself, the
-> binary isn't quarantined.
+| Flag | Meaning |
+|---|---|
+| `--apps ports,netscan` | which tools (also `all`; default: all) |
+| `--dir <path>` | install location (default: the per-OS folder above) |
+| `--no-autostart` | don't register login autostart |
+| `--no-start` | don't launch right after installing |
+| `-y`, `--yes` | accept all defaults, never prompt |
 
-**Manual alternative (no `make`):** `cd utilities/systray-ports && go build -o ~/Applications/network-utility/systray-ports .` (repeat for `systray-netscan`), run each binary, and add them to **System Settings → General → Login Items** for autostart.
+Any flag you omit is asked interactively (or takes its default when input isn't a terminal).
 
----
+**Grant permission on first scan:** the subnet scanner needs local-network access.
+On macOS you'll get a **Local Network** prompt — click **Allow** (or later: System
+Settings → Privacy & Security → Local Network). On Windows, allow the **Firewall**
+prompt on your private network. Without it, scans find nothing.
 
-### 🪟 Windows
+**Uninstall (any OS):**
 
-Windows has no `launchd`, so install is a few explicit steps.
-
-**1. Build the two `.exe` files.** Open **PowerShell** in the repo folder:
-
-```powershell
-cd utilities\systray-ports
-go build -o systray-ports.exe .
-cd ..\systray-netscan
-go build -o systray-netscan.exe .
+```sh
+go run ./installer uninstall
 ```
 
-> Or build them on a Mac/Linux with `make windows` (outputs to `./bin`) and copy the
-> `.exe`s over.
+Stops both tools, removes the autostart entries and binaries. (Settings are left in
+place; delete the install folder above to purge them too.) If you installed to a custom
+location, pass it back: `go run ./installer uninstall --dir <path>`.
 
-**2. Put them somewhere permanent**, e.g. create `C:\Program Files\network-utility\`
-(or a folder in your user profile) and move both `.exe`s there.
-
-**3. Run them** — double-click each `.exe`. Icons appear in the **system tray** (the
-`^` overflow near the clock). Windows may pop a **Firewall** prompt on first scan —
-allow it on your private network.
-
-**4. Start automatically at login:** press **Win + R**, type `shell:startup`, Enter —
-this opens your Startup folder. Create a shortcut to each `.exe` there (right-drag the
-`.exe` → *Create shortcuts here*). They'll launch to the tray at every sign-in.
-
-**Uninstall:** delete the shortcuts from the Startup folder and remove the `.exe`s.
-
-> On Windows the tray shows **icons only** (no text label next to the clock), so the
-> port/host counts appear in the **tooltip** when you hover, and inside the menu.
+> `make setup` / `make unsetup` are shorthands for the two commands above (macOS/Linux,
+> where `make` is available). On macOS you built the binaries yourself, so there's no
+> Gatekeeper "unidentified developer" warning.
 
 ---
 
 ### All `make` targets
 
 ```sh
-make install      # macOS: build + install + start (see above)
-make uninstall    # macOS: stop + remove
+make setup        # any OS: build + install + autostart (go run ./installer install)
+make unsetup      # any OS: stop + remove autostart + binaries
 make build        # build both for the current OS into ./bin
 make windows      # cross-build both as .exe into ./bin
 make run-ports    # run one in the foreground (quick test, Ctrl-C to stop)
 make run-netscan
 make clean        # remove ./bin
 ```
+
+> `make install` / `make uninstall` still exist as the macOS-only launchd path, but
+> `go run ./installer install` supersedes them and works everywhere.
 
 ## Architecture
 

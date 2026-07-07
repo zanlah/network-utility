@@ -1,0 +1,8 @@
+// Ties the repo's modules together so `go run ./installer` works from the root.
+go 1.24.4
+
+use (
+	./installer
+	./utilities/systray-netscan
+	./utilities/systray-ports
+)

@@ -1,5 +1,7 @@
 # network-utility — build & install the cross-platform tray tools.
 #
+#   make setup       any OS: build + install + autostart (go run ./installer install)
+#   make unsetup     any OS: stop + remove autostart + binaries
 #   make build       build both tools for this OS into ./bin
 #   make windows     cross-build both as .exe into ./bin
 #   make install     (macOS) build → ~/Applications/network-utility + auto-start at login
@@ -13,16 +15,26 @@ LAUNCHD_DIR  := $(HOME)/Library/LaunchAgents
 LABEL_PREFIX := si.viptronik
 BIN          := $(CURDIR)/bin
 
-.PHONY: help build windows install uninstall clean run-ports run-netscan
+.PHONY: help setup unsetup build windows install uninstall clean run-ports run-netscan
 
 help:
 	@echo "network-utility — targets:"
+	@echo "  make setup       any OS: build + install + autostart (go run ./installer install)"
+	@echo "  make unsetup     any OS: stop + remove autostart + binaries"
 	@echo "  make build       build both tools into ./bin (this OS)"
 	@echo "  make windows     cross-build both as .exe into ./bin"
 	@echo "  make install     macOS: install to $(PREFIX) + start at login"
 	@echo "  make uninstall   macOS: remove LaunchAgents + binaries"
 	@echo "  make run-ports | run-netscan   run one in the foreground"
 	@echo "  make clean       remove ./bin"
+
+# Cross-platform installer (macOS / Windows / Linux). The Go program does the
+# OS-specific autostart wiring; this is just a shortcut for `go run ./installer`.
+setup:
+	go run ./installer install
+
+unsetup:
+	go run ./installer uninstall
 
 build:
 	@mkdir -p "$(BIN)"

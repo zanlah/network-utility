@@ -4,6 +4,9 @@
 # Claude Code local settings
 .claude/settings.local.json
 
+# Go workspace checksum (regenerated locally)
+go.work.sum
+
 # Go build output
 /bin/
 utilities/systray-ports/systray-ports

@@ -22,6 +22,12 @@ var (
 func loadConfig() {
 	cfgMu.Lock()
 	defer cfgMu.Unlock()
+	// Default the swap ON: it's the tool's whole purpose, and requiring a menu
+	// toggle first surprised users (especially in VMs, where ⌘ arrives as the
+	// Windows key ready to be swapped). An existing config.json — written
+	// whenever the user flips the toggle — overrides this default, so anyone who
+	// deliberately turns it off stays off.
+	cfg.Enabled = true
 	if b, err := os.ReadFile(confFile("config.json")); err == nil {
 		_ = json.Unmarshal(b, &cfg)
 	}

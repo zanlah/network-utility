@@ -35,7 +35,7 @@ func TestParseNumberSelection(t *testing.T) {
 		want []string
 		ok   bool
 	}{
-		{"", names(allApps), true},
+		{"", names(defaultApps()), true}, // Enter → default (keyswap opt-out)
 		{"all", names(allApps), true},
 		{"both", names(allApps), true},
 		{"1", []string{"systray-ports"}, true},

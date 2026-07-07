@@ -44,14 +44,33 @@ var allApps = []app{
 	{"systray-keyswap", "⌨️", "Key swap", "swap Ctrl ⇄ ⊞ Win for VMs (Windows only)"},
 }
 
+// optOutByDefault holds tools that are NOT installed unless the user picks them
+// explicitly. keyswap installs a global keyboard hook, so it stays opt-in.
+var optOutByDefault = map[string]bool{"systray-keyswap": true}
+
+// defaultApps is the selection used when the user doesn't choose explicitly
+// (non-interactive install, or pressing Enter at the picker): everything except
+// the opt-out tools.
+func defaultApps() []app {
+	out := make([]app, 0, len(allApps))
+	for _, a := range allApps {
+		if !optOutByDefault[a.name] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 const label = "si.viptronik" // reverse-DNS prefix for autostart labels
 
 // options is a fully-resolved install request (after flags + prompts).
 type options struct {
-	apps      []app
-	dir       string
-	autostart bool
-	startNow  bool
+	apps       []app
+	dir        string
+	autostart  bool
+	startNow   bool
+	rustDesk   bool           // also download + launch the RustDesk remote-desktop client
+	rustDeskRD rustDeskConfig // self-host preconfiguration for that client
 }
 
 func main() {
@@ -84,8 +103,16 @@ func main() {
 		if err := uninstall(dir); err != nil {
 			fail(err)
 		}
+	case "rustdesk":
+		if err := downloadRustDesk(resolveRustDesk(os.Args[2:])); err != nil {
+			fail(err)
+		}
+	case "seal-rustdesk":
+		if err := sealRustDesk(); err != nil {
+			fail(err)
+		}
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\nusage: go run ./installer [install|uninstall|build] [flags]\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\nusage: go run ./installer [install|uninstall|build|rustdesk|seal-rustdesk] [flags]\n", cmd)
 		os.Exit(2)
 	}
 }
@@ -99,6 +126,10 @@ func resolveOptions(args []string, withAutostart bool) options {
 	dirFlag := fs.String("dir", "", "install directory")
 	noAutostart := fs.Bool("no-autostart", false, "don't register login autostart")
 	noStart := fs.Bool("no-start", false, "don't launch right after installing")
+	rustdesk := fs.Bool("rustdesk", false, "also download + launch the RustDesk remote-desktop client")
+	rdHost := fs.String("rustdesk-host", "", "self-hosted RustDesk server host (overrides the sealed blob)")
+	rdKey := fs.String("rustdesk-key", "", "self-hosted RustDesk server public key")
+	rdPass := fs.String("rustdesk-password", "", "deployment password to unlock the baked-in server")
 	yes := fs.Bool("yes", false, "accept defaults, never prompt")
 	fs.BoolVar(yes, "y", false, "accept defaults, never prompt (shorthand)")
 	_ = fs.Parse(args)
@@ -118,7 +149,7 @@ func resolveOptions(args []string, withAutostart bool) options {
 	} else if interactive {
 		apps = promptApps()
 	} else {
-		apps = allApps
+		apps = defaultApps()
 	}
 
 	// Where.
@@ -142,17 +173,31 @@ func resolveOptions(args []string, withAutostart bool) options {
 		}
 	}
 
+	// Optional extra: the RustDesk remote-desktop client (install only).
+	rustDesk := *rustdesk
+	if withAutostart && interactive && !*rustdesk {
+		rustDesk = promptYesNo("Also download the RustDesk remote-desktop client?", false)
+	}
+
+	// Self-host preconfiguration for that client. Explicit --rustdesk-host/-key
+	// win; otherwise unlock the sealed blob with the deployment password (flag or
+	// prompt). Blank result = stock client, no preconfig.
+	rd := rustDeskConfig{host: strings.TrimSpace(*rdHost), key: strings.TrimSpace(*rdKey)}
+	if rustDesk && rd.host == "" {
+		rd = unlockOrPrompt(strings.TrimSpace(*rdPass), interactive)
+	}
+
 	if interactive {
-		printSummary(apps, dir, autostart, startNow)
+		printSummary(apps, dir, autostart, startNow, rustDesk, rd)
 		if !promptYesNo("Proceed?", true) {
 			fmt.Println("Cancelled.")
 			os.Exit(0)
 		}
 	}
-	return options{apps: apps, dir: dir, autostart: autostart, startNow: startNow}
+	return options{apps: apps, dir: dir, autostart: autostart, startNow: startNow, rustDesk: rustDesk, rustDeskRD: rd}
 }
 
-func printSummary(apps []app, dir string, autostart, startNow bool) {
+func printSummary(apps []app, dir string, autostart, startNow, rustDesk bool, rd rustDeskConfig) {
 	fmt.Printf("\n  Summary\n")
 	names := make([]string, len(apps))
 	for i, a := range apps {
@@ -161,7 +206,12 @@ func printSummary(apps []app, dir string, autostart, startNow bool) {
 	fmt.Printf("    tools:     %s\n", strings.Join(names, ", "))
 	fmt.Printf("    location:  %s\n", dir)
 	fmt.Printf("    autostart: %s\n", yesNo(autostart))
-	fmt.Printf("    start now: %s\n\n", yesNo(startNow))
+	fmt.Printf("    start now: %s\n", yesNo(startNow))
+	rd6 := yesNo(rustDesk)
+	if rustDesk && rd.enabled() {
+		rd6 += " → " + rd.host
+	}
+	fmt.Printf("    rustdesk:  %s\n\n", rd6)
 }
 
 // install builds the selected binaries and registers autostart per options.
@@ -192,6 +242,13 @@ func install(root string, opts options) error {
 	fmt.Println("\nInstalled. 🔌 / 📡 should appear in your menu bar / system tray.")
 	if runtime.GOOS == "darwin" && contains(opts.apps, "systray-netscan") {
 		fmt.Println("(the scanner asks for Local Network permission on its first scan — allow it.)")
+	}
+	if opts.rustDesk {
+		fmt.Println()
+		if err := downloadRustDesk(opts.rustDeskRD); err != nil {
+			// Don't fail the whole install over the optional extra.
+			fmt.Printf("  (could not fetch RustDesk: %v — get it at https://rustdesk.com/download)\n", err)
+		}
 	}
 	return nil
 }

@@ -40,7 +40,7 @@ func selectApps() (chosen []app, ok bool) {
 
 	selected := make([]bool, len(allApps))
 	for i := range selected {
-		selected[i] = true // start with all checked (matches the "all" default)
+		selected[i] = !optOutByDefault[allApps[i].name] // opt-out tools (keyswap) start unchecked
 	}
 	cursor := 0
 	n := len(allApps)

@@ -39,7 +39,7 @@ func promptAppsByNumber() []app {
 	}
 	fmt.Println()
 	for {
-		line := readLine("Enter numbers (e.g. 1,2), or 'all'", "all")
+		line := readLine("Enter numbers (e.g. 1,2), Enter for the default, or 'all'", "")
 		if sel, ok := parseNumberSelection(line); ok {
 			return sel
 		}
@@ -50,8 +50,11 @@ func promptAppsByNumber() []app {
 // parseNumberSelection turns "all" / "1" / "1,2" into the matching apps.
 func parseNumberSelection(s string) ([]app, bool) {
 	s = strings.TrimSpace(strings.ToLower(s))
-	if s == "all" || s == "both" || s == "" {
+	if s == "all" || s == "both" {
 		return allApps, true
+	}
+	if s == "" { // Enter → default selection (keyswap opt-out)
+		return defaultApps(), true
 	}
 	var out []app
 	seen := map[int]bool{}

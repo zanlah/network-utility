@@ -99,12 +99,16 @@ func onReady() {
 	mQuit := systray.AddMenuItem("Quit", "")
 	go func() { <-mQuit.ClickedCh; systray.Quit() }()
 
-	// Apply the saved state on startup so it survives restarts/logins.
-	if swapSupported() && swapEnabled() {
-		if err := setSwap(true); err != nil {
+	// Apply the saved state on startup so it survives restarts/logins. The swap
+	// defaults ON (swapEnabled() is true unless the user turned it off), so it
+	// works immediately without touching the menu. Apply both directions so a
+	// saved "off" is honoured too.
+	if swapSupported() {
+		on := swapEnabled()
+		if err := setSwap(on); err != nil {
 			logf("could not restore swap on startup: %v", err)
 		} else {
-			updateStatus(true)
+			updateStatus(on)
 		}
 	}
 }

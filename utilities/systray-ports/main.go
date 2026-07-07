@@ -1,5 +1,5 @@
-// systray-ports: a cross-platform (macOS + Windows) tray version of the ports
-// plugin, to show how the same idea looks without SwiftBar.
+// systray-ports: a cross-platform (macOS + Windows + Linux) tray version of the
+// ports plugin, to show how the same idea looks without SwiftBar.
 //
 // Architecture — the point of this example:
 //   main.go              the PRESENTER: builds the tray menu, handles clicks.
@@ -8,6 +8,7 @@
 //   collector.go         the shared DATA CONTRACT (the Listener struct + helpers).
 //   collector_darwin.go  the macOS ADAPTER: lsof + kill.   (build tag: darwin)
 //   collector_windows.go the Windows ADAPTER: netstat + taskkill. (build tag: windows)
+//   collector_linux.go   the Linux ADAPTER: ss + kill.       (build tag: linux)
 //
 // The presenter calls listListeners() / terminate() / forceKill(); the compiler
 // links in the right adapter for the target OS. Build once per OS, no #ifdef soup.

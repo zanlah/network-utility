@@ -20,8 +20,10 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -339,7 +341,12 @@ func buildAll(root, dstDir string, apps []app) ([]string, error) {
 		args = append(args, ".")
 		cmd := exec.Command("go", args...)
 		cmd.Dir = filepath.Join(root, "utilities", a.name)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		// Stream build output live, but also keep a copy of stderr so we can
+		// recognise the classic missing-GTK/appindicator failure on Linux and
+		// print an actionable hint instead of a raw pkg-config error.
+		var errBuf bytes.Buffer
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = io.MultiWriter(os.Stderr, &errBuf)
 		cmd.Env = os.Environ()
 		if runtime.GOOS == "windows" {
 			// The tray needs no C compiler on Windows; disabling cgo keeps the
@@ -347,11 +354,39 @@ func buildAll(root, dstDir string, apps []app) ([]string, error) {
 			cmd.Env = append(cmd.Env, "CGO_ENABLED=0")
 		}
 		if err := cmd.Run(); err != nil {
+			if runtime.GOOS == "linux" && looksLikeMissingTrayDeps(errBuf.String()) {
+				return nil, fmt.Errorf("build %s: %w\n\n%s", a.name, err, linuxTrayDepHint())
+			}
 			return nil, fmt.Errorf("build %s: %w", a.name, err)
 		}
 		out = append(out, dst)
 	}
 	return out, nil
+}
+
+// looksLikeMissingTrayDeps reports whether a Linux `go build` failure is the
+// familiar "the GTK / appindicator dev libraries (or a C compiler) aren't
+// installed" case, so we can offer the fix instead of a raw pkg-config dump.
+func looksLikeMissingTrayDeps(stderr string) bool {
+	s := strings.ToLower(stderr)
+	for _, needle := range []string{"appindicator", "gtk-3.0", "pkg-config", "exec: \"gcc\"", "exec: \"cc\"", "c compiler"} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// linuxTrayDepHint tells the user which system packages the cgo tray build needs.
+// The systray library links GTK 3 + libayatana-appindicator3 via pkg-config, and
+// cgo needs a C compiler — none of which ship by default on a minimal install.
+func linuxTrayDepHint() string {
+	return "The tray tools need GTK 3 + the AppIndicator dev libraries (and a C compiler) to build on Linux.\n" +
+		"Install them for your distro, then re-run the installer:\n" +
+		"  Debian/Ubuntu/Mint: sudo apt install gcc libgtk-3-dev libayatana-appindicator3-dev\n" +
+		"  Fedora/RHEL:        sudo dnf install gcc gtk3-devel libayatana-appindicator-gtk3-devel\n" +
+		"  Arch/Manjaro:       sudo pacman -S gcc gtk3 libayatana-appindicator\n" +
+		"(RustDesk needs none of this — it's a plain download.)"
 }
 
 // ensureReplaceable waits (Windows only) for a stopped instance to release its

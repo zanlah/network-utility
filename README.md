@@ -86,6 +86,15 @@ login:
 > **Windows:** just open **PowerShell** in the repo folder and run the one command above
 > — no `.exe` juggling, no `shell:startup` shortcuts. (Go must be installed.)
 
+> **Linux:** the tray tools are cgo apps that link GTK 3 + AppIndicator, so you need a
+> C compiler and those dev libraries once:
+> - Debian/Ubuntu/Mint: `sudo apt install gcc libgtk-3-dev libayatana-appindicator3-dev`
+> - Fedora/RHEL: `sudo dnf install gcc gtk3-devel libayatana-appindicator-gtk3-devel`
+> - Arch/Manjaro: `sudo pacman -S gcc gtk3 libayatana-appindicator`
+>
+> (RustDesk needs none of this — it's a plain download. The installer prints this same
+> hint if a build fails for want of these packages.)
+
 **Skip the prompts** with flags (handy for scripting or a second machine):
 
 ```sh

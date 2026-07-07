@@ -31,36 +31,95 @@ utilities/
 
 Each tool has its own README with full details, build flags, and design notes.
 
-## Install
+## Installation
 
-Needs **Go 1.21+**. From the repo root:
+**Prerequisite (both OSes):** install **[Go 1.21+](https://go.dev/dl)**, then get the code:
 
 ```sh
-make install      # macOS: build both → ~/Applications/network-utility, start now + at login
-make uninstall    # macOS: stop and remove them
+git clone https://github.com/zanlah/network-utility.git
+cd network-utility
 ```
 
-`make install` builds each tool, drops the binaries in `~/Applications/network-utility`,
-and installs a **LaunchAgent** per tool (`~/Library/LaunchAgents/si.viptronik.*.plist`,
-generated from [`packaging/launchagent.plist.in`](packaging/launchagent.plist.in)) so
-they launch at login and restart if they crash. `🔌` and `📡` appear in the menu bar.
-On its first scan the subnet scanner asks for **Local Network** permission — allow it.
+---
 
-Building locally means no Gatekeeper hassle (a self-built binary isn't quarantined).
+### 🍎 macOS
 
-### Other targets
+**1. Install (one command, from the repo root):**
 
 ```sh
-make build        # just build both for this OS into ./bin
-make windows      # cross-build both as .exe into ./bin (copy to Windows, add to shell:startup)
-make run-ports    # run one in the foreground (quick test)
+make install
+```
+
+This builds both tools, puts the binaries in `~/Applications/network-utility/`, and
+registers a **LaunchAgent** for each (`~/Library/LaunchAgents/si.viptronik.*.plist`)
+so they start now, again at every login, and restart if they crash. `🔌` and `📡`
+appear in the menu bar within a second or two.
+
+**2. Grant permission:** the first time the subnet scanner runs a scan, macOS asks
+to let it **find devices on your local network** — click **Allow** (or later:
+System Settings → Privacy & Security → Local Network). Without it, scans find nothing.
+
+**3. Done.** They're running and will come back after every reboot.
+
+**Uninstall:**
+
+```sh
+make uninstall            # stops them + removes the LaunchAgents and binaries
+rm -rf ~/Applications/network-utility   # optional: also delete settings/logs
+```
+
+> No Gatekeeper "unidentified developer" warning — because you built it yourself, the
+> binary isn't quarantined.
+
+**Manual alternative (no `make`):** `cd utilities/systray-ports && go build -o ~/Applications/network-utility/systray-ports .` (repeat for `systray-netscan`), run each binary, and add them to **System Settings → General → Login Items** for autostart.
+
+---
+
+### 🪟 Windows
+
+Windows has no `launchd`, so install is a few explicit steps.
+
+**1. Build the two `.exe` files.** Open **PowerShell** in the repo folder:
+
+```powershell
+cd utilities\systray-ports
+go build -o systray-ports.exe .
+cd ..\systray-netscan
+go build -o systray-netscan.exe .
+```
+
+> Or build them on a Mac/Linux with `make windows` (outputs to `./bin`) and copy the
+> `.exe`s over.
+
+**2. Put them somewhere permanent**, e.g. create `C:\Program Files\network-utility\`
+(or a folder in your user profile) and move both `.exe`s there.
+
+**3. Run them** — double-click each `.exe`. Icons appear in the **system tray** (the
+`^` overflow near the clock). Windows may pop a **Firewall** prompt on first scan —
+allow it on your private network.
+
+**4. Start automatically at login:** press **Win + R**, type `shell:startup`, Enter —
+this opens your Startup folder. Create a shortcut to each `.exe` there (right-drag the
+`.exe` → *Create shortcuts here*). They'll launch to the tray at every sign-in.
+
+**Uninstall:** delete the shortcuts from the Startup folder and remove the `.exe`s.
+
+> On Windows the tray shows **icons only** (no text label next to the clock), so the
+> port/host counts appear in the **tooltip** when you hover, and inside the menu.
+
+---
+
+### All `make` targets
+
+```sh
+make install      # macOS: build + install + start (see above)
+make uninstall    # macOS: stop + remove
+make build        # build both for the current OS into ./bin
+make windows      # cross-build both as .exe into ./bin
+make run-ports    # run one in the foreground (quick test, Ctrl-C to stop)
 make run-netscan
-make clean
+make clean        # remove ./bin
 ```
-
-**Windows:** `make windows`, copy the `.exe`s somewhere permanent, and put shortcuts
-in the Startup folder (`Win+R` → `shell:startup`). The tray is icon-only there, so
-counts show in the tooltip.
 
 ## Architecture
 

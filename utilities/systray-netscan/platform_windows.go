@@ -12,7 +12,7 @@ import (
 // pingHost (Windows): -n count, -w timeout(ms). Windows ping can exit 0 even on
 // "unreachable", so confirm a real reply by looking for "TTL=".
 func pingHost(ip string, count int) bool {
-	out, _ := exec.Command("ping", "-n", strconv.Itoa(count), "-w", "800", ip).Output()
+	out, _ := command("ping", "-n", strconv.Itoa(count), "-w", "800", ip).Output()
 	return strings.Contains(string(out), "TTL=")
 }
 
@@ -20,7 +20,7 @@ var macRe = regexp.MustCompile(`([0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2}`)
 
 // arpLookup (Windows): `arp -a <ip>` -> "  ip   aa-bb-cc-..  dynamic"
 func arpLookup(ip string) string {
-	out, _ := exec.Command("arp", "-a", ip).Output()
+	out, _ := command("arp", "-a", ip).Output()
 	m := macRe.FindString(string(out))
 	return strings.ReplaceAll(m, "-", ":")
 }
@@ -42,19 +42,19 @@ func tailscaleBin() string {
 }
 
 func copyToClipboard(s string) {
-	c := exec.Command("cmd", "/c", "clip")
+	c := command("cmd", "/c", "clip")
 	c.Stdin = strings.NewReader(s)
 	_ = c.Run()
 }
 
 func openURL(u string) {
-	_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
+	_ = command("rundll32", "url.dll,FileProtocolHandler", u).Start()
 }
 
 func promptSubnet() string {
 	ps := `Add-Type -AssemblyName Microsoft.VisualBasic; ` +
 		`[Microsoft.VisualBasic.Interaction]::InputBox('Enter subnet (CIDR, e.g. 192.168.1.0/24):','Subnet Scanner','192.168.1.0/24')`
-	out, err := exec.Command("powershell", "-NoProfile", "-Command", ps).Output()
+	out, err := command("powershell", "-NoProfile", "-Command", ps).Output()
 	if err != nil {
 		return ""
 	}

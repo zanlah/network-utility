@@ -9,7 +9,7 @@
 #   make run-ports / run-netscan   run one tool in the foreground (for testing)
 #   make clean       remove ./bin
 
-APPS         := systray-ports systray-netscan
+APPS         := systray-ports systray-netscan systray-keyswap
 PREFIX       ?= $(HOME)/Applications/network-utility
 LAUNCHD_DIR  := $(HOME)/Library/LaunchAgents
 LABEL_PREFIX := si.viptronik
@@ -48,7 +48,7 @@ windows:
 	@mkdir -p "$(BIN)"
 	@for app in $(APPS); do \
 		echo "building $$app.exe…"; \
-		( cd utilities/$$app && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$(BIN)/$$app.exe" . ) || exit 1; \
+		( cd utilities/$$app && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o "$(BIN)/$$app.exe" . ) || exit 1; \
 	done
 	@echo "→ .exe binaries in ./bin (copy them to Windows; add shortcuts to shell:startup)"
 

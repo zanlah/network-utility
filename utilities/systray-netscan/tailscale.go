@@ -1,9 +1,6 @@
 package main
 
-import (
-	"encoding/json"
-	"os/exec"
-)
+import "encoding/json"
 
 // Native JSON parsing — no jq/python3 needed (that was a bash limitation).
 
@@ -38,7 +35,7 @@ func tailscaleStatus() (*tsStatus, bool) {
 	if bin == "" {
 		return nil, false
 	}
-	out, err := exec.Command(bin, "status", "--json").Output()
+	out, err := command(bin, "status", "--json").Output()
 	if err != nil {
 		logf("tailscale status error: %v", err)
 		return nil, false

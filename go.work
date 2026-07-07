@@ -3,6 +3,7 @@ go 1.24.4
 
 use (
 	./installer
+	./utilities/systray-keyswap
 	./utilities/systray-netscan
 	./utilities/systray-ports
 )

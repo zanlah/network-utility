@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,15 +35,15 @@ func TestParseNumberSelection(t *testing.T) {
 		want []string
 		ok   bool
 	}{
-		{"", []string{"systray-ports", "systray-netscan"}, true},
-		{"all", []string{"systray-ports", "systray-netscan"}, true},
-		{"both", []string{"systray-ports", "systray-netscan"}, true},
+		{"", names(allApps), true},
+		{"all", names(allApps), true},
+		{"both", names(allApps), true},
 		{"1", []string{"systray-ports"}, true},
 		{"2", []string{"systray-netscan"}, true},
 		{"1,2", []string{"systray-ports", "systray-netscan"}, true},
 		{"2, 1", []string{"systray-netscan", "systray-ports"}, true},
 		{"1,1", []string{"systray-ports"}, true}, // dedup
-		{"3", nil, false},
+		{"99", nil, false},                       // out of range
 		{"x", nil, false},
 		{"0", nil, false},
 	}
@@ -60,9 +61,10 @@ func TestParseAppSelection(t *testing.T) {
 		want []string
 		ok   bool
 	}{
-		{"all", []string{"systray-ports", "systray-netscan"}, true},
+		{"all", names(allApps), true},
 		{"ports", []string{"systray-ports"}, true},
 		{"netscan", []string{"systray-netscan"}, true},
+		{"keyswap", []string{"systray-keyswap"}, true},
 		{"systray-ports", []string{"systray-ports"}, true},
 		{"ports,netscan", []string{"systray-ports", "systray-netscan"}, true},
 		{"nope", nil, false},
@@ -100,16 +102,18 @@ func TestRenderFrame(t *testing.T) {
 			t.Errorf("frame missing tool %q", a.title)
 		}
 	}
+	rewind := fmt.Sprintf("\x1b[%dA", len(allApps)+2) // 2 header lines + one per app
+
 	// First frame must NOT emit the cursor-up rewind sequence.
-	if strings.Contains(out, "\x1b[4A") {
+	if strings.Contains(out, rewind) {
 		t.Error("first frame should not rewind")
 	}
 
 	// A repeat frame should rewind by header+rows lines.
 	buf.Reset()
 	render(&buf, 1, selected, false)
-	if !strings.Contains(buf.String(), "\x1b[4A") { // 2 header + 2 apps
-		t.Error("repeat frame should rewind 4 lines")
+	if !strings.Contains(buf.String(), rewind) {
+		t.Errorf("repeat frame should rewind %d lines", len(allApps)+2)
 	}
 }
 

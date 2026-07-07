@@ -40,6 +40,7 @@ type app struct {
 var allApps = []app{
 	{"systray-ports", "🔌", "Ports monitor", "listening TCP ports + one-click kill"},
 	{"systray-netscan", "📡", "Subnet scanner", "live hosts, PLC/Loxone detection, Tailscale peers"},
+	{"systray-keyswap", "⌨️", "Key swap", "swap Ctrl ⇄ ⊞ Win for VMs (Windows only)"},
 }
 
 const label = "si.viptronik" // reverse-DNS prefix for autostart labels
@@ -240,7 +241,15 @@ func buildAll(root, dstDir string, apps []app) ([]string, error) {
 	for _, a := range apps {
 		dst := filepath.Join(dstDir, exeName(a.name))
 		fmt.Printf("building %s…\n", a.name)
-		cmd := exec.Command("go", "build", "-o", dst, ".")
+		args := []string{"build", "-o", dst}
+		if runtime.GOOS == "windows" {
+			// -H=windowsgui marks the binary as a GUI app so the tray process
+			// itself has no console window. (Child processes are hidden
+			// separately via CREATE_NO_WINDOW in each collector.)
+			args = append(args, "-ldflags", "-H=windowsgui")
+		}
+		args = append(args, ".")
+		cmd := exec.Command("go", args...)
 		cmd.Dir = filepath.Join(root, "utilities", a.name)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		cmd.Env = os.Environ()

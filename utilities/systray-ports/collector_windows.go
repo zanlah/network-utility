@@ -6,12 +6,22 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 )
+
+// command builds an *exec.Cmd that runs its child without popping a console
+// window. Without this, every netstat/tasklist/taskkill spawn flashes a cmd
+// window — and the 5s refresh ticker turns that into constant flashing.
+func command(name string, args ...string) *exec.Cmd {
+	c := exec.Command(name, args...)
+	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	return c
+}
 
 // listListeners (Windows): `netstat -ano -p TCP` for LISTENING sockets, then map
 // PID → image name via `tasklist`. Same Listener contract as the macOS collector.
 func listListeners() ([]Listener, error) {
-	out, err := exec.Command("netstat", "-ano", "-p", "TCP").Output()
+	out, err := command("netstat", "-ano", "-p", "TCP").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +61,7 @@ func listListeners() ([]Listener, error) {
 // processNames maps PID → image name (without .exe) via tasklist CSV.
 func processNames() map[int]string {
 	m := map[int]string{}
-	out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+	out, err := command("tasklist", "/FO", "CSV", "/NH").Output()
 	if err != nil {
 		return m
 	}
@@ -74,17 +84,17 @@ func processNames() map[int]string {
 }
 
 // terminate / forceKill (Windows): no SIGTERM, so use taskkill (/F = force).
-func terminate(pid int) error { return exec.Command("taskkill", "/PID", strconv.Itoa(pid)).Run() }
+func terminate(pid int) error { return command("taskkill", "/PID", strconv.Itoa(pid)).Run() }
 func forceKill(pid int) error {
-	return exec.Command("taskkill", "/F", "/PID", strconv.Itoa(pid)).Run()
+	return command("taskkill", "/F", "/PID", strconv.Itoa(pid)).Run()
 }
 
 // clipboard + URL opener (used by the bug reporter).
 func copyToClipboard(s string) {
-	c := exec.Command("cmd", "/c", "clip")
+	c := command("cmd", "/c", "clip")
 	c.Stdin = strings.NewReader(s)
 	_ = c.Run()
 }
 func openURL(u string) {
-	_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start()
+	_ = command("rundll32", "url.dll,FileProtocolHandler", u).Start()
 }

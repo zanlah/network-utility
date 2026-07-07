@@ -10,6 +10,7 @@ Go with [`getlantern/systray`](https://github.com/getlantern/systray), running o
 |---|---|
 | **[Ports monitor](utilities/systray-ports)** | Lists listening TCP ports (grouped for web dev) with one-click kill (SIGTERM / SIGKILL). |
 | **[Subnet scanner](utilities/systray-netscan)** | Scans a subnet for live hosts; detects **PLCs & Loxone Miniservers**, resolves **Windows/mDNS/NetBIOS** names, lists **Tailscale** peers, and scans subnets advertised over Tailscale. |
+| **[Key swap](utilities/systray-keyswap)** | Swaps **Ctrl ⇄ ⊞ Win** with a live toggle, so a Mac keyboard / muscle memory feels normal on Windows (e.g. in a VM). Windows only. |
 
 ## Platform support
 
@@ -17,6 +18,7 @@ Go with [`getlantern/systray`](https://github.com/getlantern/systray), running o
 |---|:---:|:---:|
 | Ports monitor | ✅ | ✅ |
 | Subnet scanner | ✅ | ✅ |
+| Key swap | — | ✅ |
 
 Each tool is one Go binary. The tray UI and all logic are shared; only a small set
 of OS-specific calls live behind build tags (`*_darwin.go` / `*_windows.go`).
@@ -27,6 +29,7 @@ of OS-specific calls live behind build tags (`*_darwin.go` / `*_windows.go`).
 utilities/
   systray-ports/      Ports monitor    (Go, macOS + Windows)
   systray-netscan/    Subnet scanner   (Go, macOS + Windows)
+  systray-keyswap/    Key swap         (Go, Windows; stub on macOS/Linux)
 ```
 
 Each tool has its own README with full details, build flags, and design notes.

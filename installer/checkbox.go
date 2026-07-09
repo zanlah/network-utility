@@ -94,8 +94,28 @@ func selectApps() (chosen []app, ok bool) {
 		case buf[0] == 'j', read >= 3 && buf[0] == 27 && buf[1] == '[' && buf[2] == 'B': // down
 			cursor = (cursor + 1) % n
 		}
+		enforceSelectedDeps(selected) // ticking RustDesk auto-ticks Tailscale
 		render(os.Stdout, cursor, selected, false)
 	}
+}
+
+// enforceSelectedDeps keeps the checkbox state consistent with enforceDeps:
+// while RustDesk is ticked, Tailscale is forced on (the server is tailnet-only).
+func enforceSelectedDeps(selected []bool) {
+	rd, ts := appIndex(rustDeskAppName), appIndex(tailscaleAppName)
+	if rd >= 0 && ts >= 0 && selected[rd] {
+		selected[ts] = true
+	}
+}
+
+// appIndex returns the position of the named app in allApps, or -1.
+func appIndex(name string) int {
+	for i, a := range allApps {
+		if a.name == name {
+			return i
+		}
+	}
+	return -1
 }
 
 // render draws the checklist to w. On repeat draws it first rewinds over the

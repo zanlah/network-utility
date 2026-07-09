@@ -15,3 +15,8 @@ utilities/systray-netscan/systray-netscan
 
 # Portable config written next to the binary during dev builds
 utilities/*/config/
+
+# Local secrets (Tailscale pre-auth key, etc.) — never commit
+.env
+.env.local
+.env.*

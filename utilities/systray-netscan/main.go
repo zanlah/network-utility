@@ -30,6 +30,7 @@ const (
 	maxNets   = 30
 	maxPeers  = 60
 	maxLoxone = 16
+	maxJanus  = 30
 )
 
 // ---- in-memory app state (replaces the bash cache + marker files) ----
@@ -42,6 +43,12 @@ type state struct {
 	active   string
 	sortMode string
 	loxone   []LoxoneDevice
+
+	// Tailscale view, refreshed by refreshTS() (CLI when reachable, else the
+	// Headscale control server) so repaint() never blocks on exec/network.
+	tsConnected bool
+	tsSelfIP    string
+	tsPeers     []TSPeer
 }
 
 var st = state{sortMode: "ip"}
@@ -68,6 +75,10 @@ var (
 	mSortHost    *systray.MenuItem
 	mAdd         *systray.MenuItem
 	mTS          *systray.MenuItem
+	mTSInfo      *systray.MenuItem
+	mTSRefresh   *systray.MenuItem
+	mJanusHeader *systray.MenuItem
+	janusItems   []*systray.MenuItem
 	mLoxStatus   *systray.MenuItem
 	hostRows     []*hostRow
 	netRows      []*netRow
@@ -163,6 +174,19 @@ func onReady() {
 
 	// Tailscale submenu: peer list (informational; advertised routes appear in Networks).
 	mTS = systray.AddMenuItem("Tailscale", "")
+	// Recheck the Tailscale connection on demand (state otherwise only updates
+	// on a scan). repaint() re-reads the interface + CLI, so this is enough.
+	mTSRefresh = mTS.AddSubMenuItem("↻ Refresh", "Recheck the Tailscale connection")
+	go func() {
+		for range mTSRefresh.ClickedCh {
+			logf("tailscale: manual refresh")
+			go refreshTS()
+		}
+	}()
+	// Always-present submenu line (this device's tailnet IP / status) so the
+	// submenu is never empty even when the peer list can't be loaded.
+	mTSInfo = mTS.AddSubMenuItem("", "")
+	mTSInfo.Disable()
 	for i := 0; i < maxPeers; i++ {
 		it := mTS.AddSubMenuItem("", "")
 		it.Hide()
@@ -210,6 +234,24 @@ func onReady() {
 		}(lr)
 	}
 
+	// Fleet-admin toggle: flip this device between tag:admin and
+	// tag:admin+tag:fleet-admin via the Headscale API. Only shown when the
+	// installer saved fleet-admin.env next to this binary.
+	if cfg, ok := loadFleetConfig(); ok {
+		systray.AddSeparator()
+		mFleet := systray.AddMenuItem("  "+fleetMenuLabel, fleetMenuTooltip)
+		setupFleetMenu(mFleet, cfg)
+		// JANUS devices: the tag:fleet peers, listed prominently under the toggle.
+		mJanusHeader = systray.AddMenuItem("  "+fleetPeersHeader, "Naprave z oznako tag:fleet")
+		mJanusHeader.Disable()
+		mJanusHeader.Hide()
+		for i := 0; i < maxJanus; i++ {
+			it := systray.AddMenuItem("", "")
+			it.Hide()
+			janusItems = append(janusItems, it)
+		}
+	}
+
 	systray.AddSeparator()
 	mReport := systray.AddMenuItem("Report bug…", "Copy diagnostics and email "+bugEmail)
 	go func() {
@@ -239,6 +281,32 @@ func onReady() {
 	}()
 	go func() { <-mQuit.ClickedCh; systray.Quit() }()
 
+	repaint()
+	go refreshTS() // populate Tailscale state without blocking the tray startup
+}
+
+// refreshTS recomputes the Tailscale view: the CLI when it's reachable (richest
+// data), otherwise the Headscale control server (works from any session), and
+// falls back to the interface's tailnet IP for the connected/offline signal.
+// Stores the result in state and repaints. Safe to call from any goroutine.
+func refreshTS() {
+	selfIP := tailnetInterfaceIP()
+	var peers []TSPeer
+	haveData := false
+	if ok, p := TSPeers(); ok {
+		peers, haveData = p, true
+	} else if cfg, ok := loadFleetConfig(); ok {
+		if hp, err := headscalePeers(cfg); err == nil {
+			peers, haveData = hp, true
+		} else {
+			logf("tailscale: headscale peers error: %v", err)
+		}
+	}
+	st.mu.Lock()
+	st.tsConnected = haveData || selfIP != ""
+	st.tsSelfIP = selfIP
+	st.tsPeers = peers
+	st.mu.Unlock()
 	repaint()
 }
 
@@ -439,8 +507,12 @@ func repaint() {
 	}
 	rowMu.Unlock()
 
-	// tailscale peers + advertised subnets
-	tsOK, peers := TSPeers()
+	// tailscale peers + advertised subnets (from the cached view refreshTS built)
+	st.mu.Lock()
+	tsConnected := st.tsConnected
+	tsSelfIP := st.tsSelfIP
+	peers := append([]TSPeer(nil), st.tsPeers...)
+	st.mu.Unlock()
 	entries := networkEntries(peers)
 
 	rowMu.Lock()
@@ -456,18 +528,60 @@ func repaint() {
 	}
 	rowMu.Unlock()
 
-	if tsOK {
+	switch {
+	case len(peers) > 0:
+		// We have a peer list (from the CLI or the Headscale control server).
 		mTS.SetTitle("Tailscale (connected)")
 		mTS.Show()
-	} else {
+		mTSInfo.Hide()
+	case tsConnected:
+		// On the tailnet (interface has a 100.x IP) but no peer list available.
+		mTS.SetTitle("Tailscale (connected)")
+		mTS.Show()
+		info := "(peer list unavailable)"
+		if tsSelfIP != "" {
+			info = "this device · " + tsSelfIP + "   (peer list unavailable)"
+		}
+		mTSInfo.SetTitle(info)
+		mTSInfo.Show()
+	default:
 		mTS.SetTitle("Tailscale (not connected)")
+		mTS.Show()
+		mTSInfo.SetTitle("(not connected)")
+		mTSInfo.Show()
 	}
 	for i, it := range peerItems {
-		if tsOK && i < len(peers) {
+		if i < len(peers) {
 			it.SetTitle(peerTitle(peers[i]))
 			it.Show()
 		} else {
 			it.Hide()
+		}
+	}
+
+	// JANUS section: the tag:fleet peers, shown prominently under the toggle.
+	if mJanusHeader != nil {
+		var janus []TSPeer
+		for _, p := range peers {
+			if p.hasTag("tag:fleet") {
+				janus = append(janus, p)
+			}
+		}
+		rowMu.Lock()
+		for i, it := range janusItems {
+			if i < len(janus) {
+				it.SetTitle(janusTitle(janus[i]))
+				it.Show()
+			} else {
+				it.Hide()
+			}
+		}
+		rowMu.Unlock()
+		if len(janus) > 0 {
+			mJanusHeader.SetTitle(fmt.Sprintf("  %s (%d)", fleetPeersHeader, len(janus)))
+			mJanusHeader.Show()
+		} else {
+			mJanusHeader.Hide()
 		}
 	}
 
@@ -541,6 +655,9 @@ func peerTitle(p TSPeer) string {
 		status = "offline"
 	}
 	extra := ""
+	if p.hasTag("tag:fleet") {
+		extra += "  🛰 JANUS"
+	}
 	if len(p.Routes) > 0 {
 		extra += "  ⇄ " + strings.Join(p.Routes, ",")
 	}
@@ -552,4 +669,18 @@ func peerTitle(p TSPeer) string {
 		name = "—"
 	}
 	return fmt.Sprintf("%-15s  %-20s  %s%s", p.IP, name, status, extra)
+}
+
+// janusTitle renders a fleet-tagged (JANUS) peer for the dedicated section,
+// with a satellite badge so it stands out.
+func janusTitle(p TSPeer) string {
+	status := "online"
+	if !p.Online {
+		status = "offline"
+	}
+	name := p.Name
+	if name == "" {
+		name = "—"
+	}
+	return fmt.Sprintf("  🛰 %-22s  %-15s  %s", name, p.IP, status)
 }

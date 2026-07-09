@@ -71,7 +71,12 @@ Start now? [Y/n]:
 Use **↑/↓** to move, **space** to check/uncheck, **a** to toggle all, **enter** to
 confirm. **Key swap** and **RustDesk** start unchecked — tick them if you want them.
 RustDesk (macOS/Windows/Linux) is fetched from its official releases and, when you have
-the deployment password, preconfigured for the self-hosted server. Press **Enter** to accept each of the remaining defaults. Then it builds only
+the deployment password, preconfigured for the self-hosted server. Because that server
+is reachable only over our self-hosted [Headscale](https://vpn.viptronik.si) tailnet, the
+installer first installs **Tailscale** and joins the tailnet (`tailscale up`), then points
+RustDesk at the server over it. Installing Tailscale and joining needs admin/root, so
+you'll see a **UAC** prompt on Windows or a **sudo/password** prompt on macOS/Linux.
+Press **Enter** to accept each of the remaining defaults. Then it builds only
 the tools you picked, installs them, and wires up autostart so they come back at every
 login:
 

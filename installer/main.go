@@ -4,6 +4,7 @@
 //	go run ./installer install         same, with flags to skip the prompts
 //	go run ./installer uninstall       stop, remove autostart entries and binaries
 //	go run ./installer build           just build the binaries into ./bin
+//	go run ./installer tailscale       install Tailscale + join the tailnet (no RustDesk)
 //
 // It shells out to `go build` (Go is already the prerequisite) and then wires up
 // autostart with whatever mechanism the OS uses: launchd on macOS, a per-user
@@ -16,10 +17,14 @@
 //	--dir  <path>          install location (default: per-OS user folder)
 //	--no-autostart         don't register login autostart
 //	--no-start             don't launch right after installing
+//	--fleet                install the fleet-admin helper (bundled script)
+//	--fleet-key <key>      Headscale API key to save for it (or FLEET_API_KEY)
+//	--fleet-node <id>      this device's node id (auto-resolved if omitted)
 //	-y, --yes              accept all defaults, never prompt
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
@@ -51,13 +56,27 @@ var allApps = []app{
 	{name: "systray-ports", icon: "🔌", title: "Ports monitor", desc: "listening TCP ports + one-click kill"},
 	{name: "systray-netscan", icon: "📡", title: "Subnet scanner", desc: "live hosts, PLC/Loxone detection, Tailscale peers"},
 	{name: "systray-keyswap", icon: "⌨️", title: "Key swap", desc: "swap Ctrl ⇄ ⊞ Win for VMs (Windows only)"},
-	{name: rustDeskAppName, icon: "🖥️", title: "RustDesk", desc: "remote-desktop client (self-hosted)", external: true},
+	{name: tailscaleAppName, icon: "🔗", title: "Tailscale", desc: "join the self-hosted tailnet (VPN)", external: true},
+	{name: rustDeskAppName, icon: "🖥️", title: "RustDesk", desc: "remote-desktop client (needs Tailscale)", external: true},
 }
 
+// tailscaleAppName is the pseudo-app entry for joining the self-hosted tailnet.
+// Like RustDesk it isn't a go-built binary — a dedicated handler installs it.
+const tailscaleAppName = "tailscale"
+
 // optOutByDefault holds tools that are NOT installed unless the user picks them
-// explicitly. keyswap installs a global keyboard hook and RustDesk is a separate
-// remote-desktop download, so both stay opt-in.
-var optOutByDefault = map[string]bool{"systray-keyswap": true, rustDeskAppName: true}
+// explicitly. keyswap installs a global keyboard hook; Tailscale and RustDesk are
+// separate downloads, so all three stay opt-in.
+var optOutByDefault = map[string]bool{"systray-keyswap": true, tailscaleAppName: true, rustDeskAppName: true}
+
+// enforceDeps applies inter-app dependencies: RustDesk can only reach the
+// self-hosted server over the tailnet, so selecting it also selects Tailscale.
+func enforceDeps(apps []app) []app {
+	if contains(apps, rustDeskAppName) && !contains(apps, tailscaleAppName) {
+		apps = append(apps, appByName(tailscaleAppName))
+	}
+	return apps
+}
 
 // defaultApps is the selection used when the user doesn't choose explicitly
 // (non-interactive install, or pressing Enter at the picker): everything except
@@ -82,6 +101,7 @@ type options struct {
 	startNow   bool
 	rustDesk   bool           // also download + launch the RustDesk remote-desktop client
 	rustDeskRD rustDeskConfig // self-host preconfiguration for that client
+	fleet      fleetConfig    // fleet-admin helper (script + saved Headscale API key)
 }
 
 func main() {
@@ -94,6 +114,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	loadDotEnv(root) // pull installer/.env.local (git-ignored) into the environment
 
 	switch cmd {
 	case "install":
@@ -118,12 +139,16 @@ func main() {
 		if err := downloadRustDesk(resolveRustDesk(os.Args[2:])); err != nil {
 			fail(err)
 		}
+	case "tailscale":
+		if err := installTailscaleOnly(resolveTailscale(os.Args[2:])); err != nil {
+			fail(err)
+		}
 	case "seal-rustdesk":
 		if err := sealRustDesk(); err != nil {
 			fail(err)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\nusage: go run ./installer [install|uninstall|build|rustdesk|seal-rustdesk] [flags]\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\nusage: go run ./installer [install|uninstall|build|rustdesk|tailscale|seal-rustdesk] [flags]\n", cmd)
 		os.Exit(2)
 	}
 }
@@ -133,7 +158,7 @@ func main() {
 // `build`, which never touches login items.
 func resolveOptions(args []string, withAutostart bool) options {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
-	appsFlag := fs.String("apps", "", "which tools: comma list of ports,netscan (or all)")
+	appsFlag := fs.String("apps", "", "which tools: comma list of ports,netscan,keyswap,tailscale,rustdesk (or all)")
 	dirFlag := fs.String("dir", "", "install directory")
 	noAutostart := fs.Bool("no-autostart", false, "don't register login autostart")
 	noStart := fs.Bool("no-start", false, "don't launch right after installing")
@@ -141,6 +166,9 @@ func resolveOptions(args []string, withAutostart bool) options {
 	rdHost := fs.String("rustdesk-host", "", "self-hosted RustDesk server host (overrides the sealed blob)")
 	rdKey := fs.String("rustdesk-key", "", "self-hosted RustDesk server public key")
 	rdPass := fs.String("rustdesk-password", "", "deployment password to unlock the baked-in server")
+	fleetFlag := fs.Bool("fleet", false, "install the fleet-admin helper (saves the Headscale API key)")
+	fleetKey := fs.String("fleet-key", "", "Headscale API key for the fleet-admin helper (or set FLEET_API_KEY)")
+	fleetNode := fs.String("fleet-node", "", "this device's Headscale node id (auto-resolved if omitted)")
 	yes := fs.Bool("yes", false, "accept defaults, never prompt")
 	fs.BoolVar(yes, "y", false, "accept defaults, never prompt (shorthand)")
 	_ = fs.Parse(args)
@@ -155,7 +183,7 @@ func resolveOptions(args []string, withAutostart bool) options {
 	if *appsFlag != "" {
 		var ok bool
 		if apps, ok = parseAppSelection(*appsFlag); !ok {
-			fail(fmt.Errorf("--apps %q: use ports, netscan, or all", *appsFlag))
+			fail(fmt.Errorf("--apps %q: use ports, netscan, keyswap, tailscale, rustdesk, or all", *appsFlag))
 		}
 	} else if interactive {
 		apps = promptApps()
@@ -190,7 +218,10 @@ func resolveOptions(args []string, withAutostart bool) options {
 	if withAutostart && *rustdesk && !contains(apps, rustDeskAppName) {
 		apps = append(apps, appByName(rustDeskAppName))
 	}
+	// RustDesk pulls in Tailscale (the server is tailnet-only).
+	apps = enforceDeps(apps)
 	rustDesk := withAutostart && contains(apps, rustDeskAppName)
+	wantTailscale := withAutostart && contains(apps, tailscaleAppName)
 
 	// Self-host preconfiguration for that client. Explicit --rustdesk-host/-key
 	// win; otherwise unlock the sealed blob with the deployment password (flag or
@@ -199,18 +230,44 @@ func resolveOptions(args []string, withAutostart bool) options {
 	if rustDesk && rd.host == "" {
 		rd = unlockOrPrompt(strings.TrimSpace(*rdPass), interactive)
 	}
+	// Environment (TS_AUTHKEY/TS_LOGIN_SERVER/TS_TAG) overrides the sealed
+	// Tailscale fields — lets us rotate the pre-auth key without re-sealing.
+	rd = applyTailscaleEnv(rd)
+
+	// Tailscale was ticked but we still have no pre-auth key (e.g. it wasn't in
+	// the sealed blob or the environment) — paste it in. Nothing is stored on disk.
+	if wantTailscale && rd.tsAuthKey == "" && interactive {
+		if rd.tsLoginServer == "" {
+			rd.tsLoginServer = strings.TrimSpace(promptString("Headscale login server URL", tailscaleDefaultLoginServer))
+		}
+		rd.tsAuthKey = strings.TrimSpace(promptString("Paste the Tailscale reusable pre-auth key (hskey-auth-…)", ""))
+		if rd.tsTag == "" {
+			rd.tsTag = strings.TrimSpace(promptString("Advertise tag (blank for none)", "tag:fleet"))
+		}
+	}
+	if wantTailscale && rd.tsLoginServer == "" {
+		rd.tsLoginServer = tailscaleDefaultLoginServer
+	}
+
+	// Fleet-admin helper: the script is bundled with the app; the installer saves
+	// the Headscale API key next to it so this device can toggle its own admin
+	// tags later. Only offered on `install`.
+	var fleet fleetConfig
+	if withAutostart {
+		fleet = resolveFleet(*fleetFlag, *fleetKey, *fleetNode, rd.tsLoginServer, interactive)
+	}
 
 	if interactive {
-		printSummary(apps, dir, autostart, startNow, rustDesk, rd)
+		printSummary(apps, dir, autostart, startNow, rustDesk, rd, fleet)
 		if !promptYesNo("Proceed?", true) {
 			fmt.Println("Cancelled.")
 			os.Exit(0)
 		}
 	}
-	return options{apps: apps, dir: dir, autostart: autostart, startNow: startNow, rustDesk: rustDesk, rustDeskRD: rd}
+	return options{apps: apps, dir: dir, autostart: autostart, startNow: startNow, rustDesk: rustDesk, rustDeskRD: rd, fleet: fleet}
 }
 
-func printSummary(apps []app, dir string, autostart, startNow, rustDesk bool, rd rustDeskConfig) {
+func printSummary(apps []app, dir string, autostart, startNow, rustDesk bool, rd rustDeskConfig, fleet fleetConfig) {
 	fmt.Printf("\n  Summary\n")
 	names := make([]string, len(apps))
 	for i, a := range apps {
@@ -224,6 +281,20 @@ func printSummary(apps []app, dir string, autostart, startNow, rustDesk bool, rd
 	// only when it's ticked and preconfigured for a self-hosted server.
 	if rustDesk && rd.enabled() {
 		fmt.Printf("    rustdesk:  self-hosted → %s\n", rd.host)
+	}
+	if contains(apps, tailscaleAppName) {
+		tag := rd.tsTag
+		if tag == "" {
+			tag = "(no tag)"
+		}
+		server := rd.tsLoginServer
+		if server == "" {
+			server = tailscaleDefaultLoginServer
+		}
+		fmt.Printf("    tailnet:   %s (%s)\n", server, tag)
+	}
+	if fleet.wantFleet() {
+		fmt.Printf("    fleet:     admin toggle helper (key saved locally)\n")
 	}
 	fmt.Printf("\n")
 }
@@ -260,11 +331,26 @@ func install(root string, opts options) error {
 	if runtime.GOOS == "darwin" && contains(opts.apps, "systray-netscan") {
 		fmt.Println("(the scanner asks for Local Network permission on its first scan — allow it.)")
 	}
+	// Tailscale + RustDesk. RustDesk needs the tailnet, so its handler installs
+	// Tailscale itself; when Tailscale is ticked without RustDesk we join here.
+	// Either way this runs before the fleet helper so its node id can resolve.
 	if opts.rustDesk {
 		fmt.Println()
 		if err := downloadRustDesk(opts.rustDeskRD); err != nil {
 			// Don't fail the whole install over the optional extra.
 			fmt.Printf("  (could not fetch RustDesk: %v — get it at https://rustdesk.com/download)\n", err)
+		}
+	} else if contains(opts.apps, tailscaleAppName) {
+		fmt.Println()
+		if err := installTailscaleOnly(opts.rustDeskRD); err != nil {
+			fmt.Printf("  (could not set up Tailscale: %v)\n", err)
+		}
+	}
+	// Fleet-admin helper: bundle the script + save the API key next to the app.
+	// Last, so Tailscale is up and this device's node id can be auto-resolved.
+	if opts.fleet.wantFleet() {
+		if err := installFleetHelper(opts.dir, opts.fleet); err != nil {
+			fmt.Printf("  (could not install the fleet-admin helper: %v)\n", err)
 		}
 	}
 	return nil
@@ -302,6 +388,12 @@ func uninstall(dir string) error {
 		stop(bin)
 		_ = os.Remove(bin)
 		fmt.Printf("removed %s\n", a.name)
+	}
+	// Fleet-admin helper (script + saved API key), if it was installed here.
+	for _, f := range []string{"fleet-admin.sh", "fleet-admin.env"} {
+		if err := os.Remove(filepath.Join(dir, f)); err == nil {
+			fmt.Printf("removed %s\n", f)
+		}
 	}
 	fmt.Printf("\nUninstalled. (Settings left in place; delete %s to purge them too.)\n", dir)
 	return nil
@@ -469,6 +561,37 @@ func defaultInstallDir() string {
 		return filepath.Join(home, "Applications", "network-utility")
 	default: // linux and friends
 		return filepath.Join(home, ".local", "share", "network-utility")
+	}
+}
+
+// loadDotEnv loads installer/.env.local (git-ignored) into the environment, so a
+// rotated Tailscale pre-auth key can live outside source control. The real
+// environment wins — the file only fills variables that aren't already set.
+// Lines are KEY=VALUE, with # comments and optional surrounding quotes.
+func loadDotEnv(root string) {
+	f, err := os.Open(filepath.Join(root, "installer", ".env.local"))
+	if err != nil {
+		return // no file → nothing to load
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.Trim(strings.TrimSpace(v), `"'`)
+		if k == "" {
+			continue
+		}
+		if _, set := os.LookupEnv(k); !set {
+			_ = os.Setenv(k, v)
+		}
 	}
 }
 

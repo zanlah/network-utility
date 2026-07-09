@@ -66,13 +66,19 @@ func onReady() {
 
 	for i := 0; i < maxRows; i++ {
 		it := systray.AddMenuItem("", "")
-		it.Hide()
 		r := &row{
 			item: it,
 			open: it.AddSubMenuItem("Open in browser", "Open http://localhost:<port>"),
 			term: it.AddSubMenuItem("Terminate (SIGTERM)", ""),
 			kill: it.AddSubMenuItem("Force Kill (SIGKILL)", ""),
 		}
+		// Hide only AFTER the submenu children exist. On Windows, Hide() removes the
+		// parent from the root menu; adding submenu children to an already-removed
+		// parent makes convertToSubMenu fail, so Terminate/Force Kill never get
+		// inserted. Only "Open" survives, because refresh() re-adds it (and the
+		// parent) on every tick — term/kill are never re-touched. macOS/Linux keep
+		// submenu items across a hidden parent, which is why this only broke Windows.
+		it.Hide()
 		rows = append(rows, r)
 		go func(r *row) { // one click-handler goroutine per row; reads the live PID/port
 			for {

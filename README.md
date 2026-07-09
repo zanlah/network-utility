@@ -36,16 +36,46 @@ Each tool has its own README with full details, build flags, and design notes.
 
 ## Installation
 
-**Prerequisite (both OSes):** install **[Go 1.21+](https://go.dev/dl)**, then get the code:
+**Prerequisite (every path below):** install **[Go 1.21+](https://go.dev/dl)** — the
+installer builds the tray tools from source.
+
+### Quickest: one curl command (no manual download)
+
+Fetches the repo into a cache dir and runs the installer. Re-running pulls the latest
+source first, so there's nothing to clone or update by hand:
+
+```sh
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/zanlah/network-utility/main/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/zanlah/network-utility/main/install.ps1 | iex
+```
+
+To pass installer flags (see the table below), append them after `-- ` on Unix, or use a
+scriptblock on Windows:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/zanlah/network-utility/main/install.sh | bash -s -- --apps ports -y
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zanlah/network-utility/main/install.ps1))) --apps ports -y
+```
+
+The source is cached at `~/.cache/network-utility` (Unix) or
+`%LOCALAPPDATA%\network-utility\src` (Windows); set `NETUTIL_SRC` to override.
+
+### Or clone it yourself
 
 ```sh
 git clone https://github.com/zanlah/network-utility.git
 cd network-utility
 ```
 
-### One command, any OS
-
-From the repo root:
+Then, from the repo root — the same command the curl one-liner runs for you:
 
 ```sh
 go run ./installer install

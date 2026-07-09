@@ -80,6 +80,7 @@ var (
 	mJanusHeader *systray.MenuItem
 	janusItems   []*systray.MenuItem
 	mLoxStatus   *systray.MenuItem
+	mDevices     *systray.MenuItem
 	hostRows     []*hostRow
 	netRows      []*netRow
 	peerItems    []*systray.MenuItem
@@ -115,9 +116,13 @@ func onReady() {
 	mSortHost = systray.AddMenuItem("Sort by host", "")
 	systray.AddSeparator()
 
-	// Live-host pool, each with a small actions submenu.
+	// Live-host pool, each with a small actions submenu. Kept inside a "Devices"
+	// submenu so a large scan doesn't flood the top-level tray menu (which the OS
+	// can't scroll cleanly — very visible on Windows). A submenu overflows into a
+	// single scrollable list instead.
+	mDevices = systray.AddMenuItem("Devices", "Scanned hosts on the active subnet")
 	for i := 0; i < maxHosts; i++ {
-		it := systray.AddMenuItem("", "")
+		it := mDevices.AddSubMenuItem("", "")
 		it.Hide()
 		r := &hostRow{
 			item:   it,
@@ -494,6 +499,13 @@ func repaint() {
 	setCheck(mSortHost, "Sort by host", mode == "host")
 
 	// host rows
+	if mDevices != nil {
+		title := fmt.Sprintf("Devices (%d)", online)
+		if newCount > 0 {
+			title += " •"
+		}
+		mDevices.SetTitle(title)
+	}
 	rowMu.Lock()
 	for i, r := range hostRows {
 		if i < len(hosts) {
